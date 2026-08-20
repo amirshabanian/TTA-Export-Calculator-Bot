@@ -35,6 +35,7 @@ log = logging.getLogger("tta-export-calculator")
     PRODUCT_PRICE, PACK_LABOR, PROFIT,
     LAND, CLEARANCE, SEA, FX, DESTINATION
 ) = range(12)
+CUSTOMER = 12
 
 
 def to_decimal(value: str) -> Decimal:
@@ -287,56 +288,103 @@ async def fx(update, context):
 
 
 def create_customer_pdf(data, result, path):
-    """Create a customer-safe quotation. Internal costs and profit are never shown."""
+    """Customer-facing quotation. English only so no Persian font squares appear."""
     styles = getSampleStyleSheet()
-    title = ParagraphStyle("TTATitle", parent=styles["Title"], fontSize=18,
-                           leading=22, alignment=1, textColor=colors.white)
-    body = ParagraphStyle("TTABody", parent=styles["BodyText"], fontSize=10,
-                          leading=14)
-    big = ParagraphStyle("TTABig", parent=styles["Title"], fontSize=25,
-                         leading=30, alignment=1)
+    title = ParagraphStyle(
+        "TTATitle", parent=styles["Title"], fontSize=19, leading=22,
+        alignment=1, textColor=colors.white
+    )
+    subtitle = ParagraphStyle(
+        "TTASubtitle", parent=styles["BodyText"], fontSize=10, leading=13,
+        alignment=1
+    )
+    body = ParagraphStyle(
+        "TTABody", parent=styles["BodyText"], fontSize=10, leading=14
+    )
+    small = ParagraphStyle(
+        "TTASmall", parent=styles["BodyText"], fontSize=8.5, leading=12
+    )
+    big = ParagraphStyle(
+        "TTABig", parent=styles["Title"], fontSize=27, leading=32,
+        alignment=1
+    )
 
-    doc = SimpleDocTemplate(path, pagesize=A4, rightMargin=36, leftMargin=36,
-                            topMargin=36, bottomMargin=36)
+    doc = SimpleDocTemplate(
+        path, pagesize=A4, rightMargin=36, leftMargin=36,
+        topMargin=30, bottomMargin=30
+    )
     story = []
-    header = Table([
-        [Paragraph("T.T.A EXPORT QUOTATION", title)],
-        [Paragraph("Tamana Tejarat Armaghan | تمنا تجارت ارمغان", body)]
-    ], colWidths=[520])
+
+    logo_path = os.path.join(os.path.dirname(__file__), "tta_logo.png")
+    header_data = []
+    if os.path.exists(logo_path):
+        from reportlab.platypus import Image as RLImage
+        logo = RLImage(logo_path, width=58, height=58)
+        header_data = [[logo, Paragraph(
+            "<b>T.T.A EXPORT QUOTATION</b><br/>"
+            "Tamana Tejarat Armaghan",
+            title
+        )]]
+        header = Table(header_data, colWidths=[75, 445])
+    else:
+        header = Table([[
+            Paragraph("T.T.A EXPORT QUOTATION", title)
+        ]], colWidths=[520])
+
     header.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#17365D")),
-        ("BACKGROUND", (0,1), (-1,1), colors.HexColor("#D9EAF7")),
+        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#17365D")),
         ("ALIGN", (0,0), (-1,-1), "CENTER"),
-        ("TOPPADDING", (0,0), (-1,-1), 10),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 10),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING", (0,0), (-1,-1), 9),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 9),
     ]))
-    story += [header, Spacer(1, 18)]
+    story += [header, Spacer(1, 8)]
+
+    company = Table([[
+        Paragraph(
+            "<b>TAMANA TEJARAT ARMAGHAN (T.T.A)</b><br/>"
+            "No. 18, Pooneh Alley, Shahda-ye Shomali St., "
+            "Molavi Building, 1st Floor, Unit 1, Bandar Abbas, Iran<br/>"
+            "Mobile: +98 939 625 5418",
+            subtitle
+        )
+    ]], colWidths=[520])
+    company.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#D9EAF7")),
+        ("ALIGN", (0,0), (-1,-1), "CENTER"),
+        ("TOPPADDING", (0,0), (-1,-1), 7),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 7),
+    ]))
+    story += [company, Spacer(1, 15)]
 
     rows = [
-        ["Quotation No. | شماره", datetime.now().strftime("TTA-%Y%m%d-%H%M")],
-        ["Date | تاریخ", datetime.now().strftime("%Y/%m/%d")],
-        ["Product | محصول", data["product"]],
-        ["Packaging | بسته‌بندی", data["packaging"]],
-        ["Packages | تعداد بسته", money(to_decimal(data["packages"]), 0)],
-        ["Gross Weight | وزن ناخالص", f"{money(result['total_gross'], 2)} KG"],
-        ["Destination | مقصد", data["destination"]],
+        ["Quotation No.", datetime.now().strftime("TTA-%Y%m%d-%H%M")],
+        ["Date", datetime.now().strftime("%Y/%m/%d")],
+        ["Customer", data.get("customer_name", "-")],
+        ["Product", data["product"]],
+        ["Packaging", data["packaging"]],
+        ["Packages", money(to_decimal(data["packages"]), 0)],
+        ["Gross Weight", f"{money(result['total_gross'], 2)} KG"],
+        ["Destination", data["destination"]],
     ]
-    table = Table(rows, colWidths=[245, 275])
+    table = Table(rows, colWidths=[170, 350])
     table.setStyle(TableStyle([
         ("GRID", (0,0), (-1,-1), .5, colors.HexColor("#B7B7B7")),
         ("BACKGROUND", (0,0), (0,-1), colors.HexColor("#D9EAF7")),
         ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-        ("FONTSIZE", (0,0), (-1,-1), 9),
+        ("FONTSIZE", (0,0), (-1,-1), 9.5),
         ("TOPPADDING", (0,0), (-1,-1), 8),
         ("BOTTOMPADDING", (0,0), (-1,-1), 8),
     ]))
     story += [table, Spacer(1, 20)]
 
     offer = Table([
-        [Paragraph("FINAL OFFER PRICE | قیمت نهایی", body)],
+        [Paragraph("FINAL OFFER PRICE", body)],
         [Paragraph(f"{money(result['customer_price'], 2)} USD / KG", big)],
-        [Paragraph(f"Total Shipment Value | ارزش کل محموله: "
-                    f"{money(result['shipment_value'], 2)} USD", body)],
+        [Paragraph(
+            f"TOTAL SHIPMENT VALUE: {money(result['shipment_value'], 2)} USD",
+            body
+        )],
     ], colWidths=[520])
     offer.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#E2F0D9")),
@@ -346,20 +394,30 @@ def create_customer_pdf(data, result, path):
         ("BOTTOMPADDING", (0,0), (-1,-1), 10),
     ]))
     story += [offer, Spacer(1, 18)]
+
     story.append(Paragraph(
-        "This customer copy contains the final commercial offer only. "
+        "This quotation contains the final commercial offer only. "
         "Internal purchase costs, operating costs and profit margin are excluded.",
-        body
+        small
     ))
     doc.build(story)
 
 
 async def destination(update, context):
     context.user_data["destination"] = update.message.text.strip()
+    await update.message.reply_text(
+        "نام مشتری را وارد کنید.\n"
+        "Enter customer name.\n\n"
+        "Example: ABC Trading LLC"
+    )
+    return CUSTOMER
+
+
+async def customer_name(update, context):
+    context.user_data["customer_name"] = update.message.text.strip()
 
     data = context.user_data.copy()
     result = calculate(data)
-
     context.user_data["last_result"] = result
 
     text = (
@@ -419,14 +477,17 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         customer_text = (
             "📄 T.T.A EXPORT QUOTATION\n\n"
-            f"Product | محصول: {data['product']}\n"
-            f"Packaging | بسته‌بندی: {data['packaging']}\n"
-            f"Packages | تعداد بسته: {money(to_decimal(data['packages']), 0)}\n"
-            f"Gross Weight | وزن ناخالص: {money(result['total_gross'], 2)} KG\n"
-            f"Destination | مقصد: {data['destination']}\n\n"
-            f"FINAL OFFER PRICE | قیمت نهایی: {money(result['customer_price'], 2)} USD/KG\n"
-            f"Total Shipment Value | ارزش کل محموله: {money(result['shipment_value'], 2)} USD\n\n"
-            "T.T.A | Tamana Tejarat Armaghan"
+            f"Customer: {data.get('customer_name', '-')}\n"
+            f"Product: {data['product']}\n"
+            f"Packaging: {data['packaging']}\n"
+            f"Packages: {money(to_decimal(data['packages']), 0)}\n"
+            f"Gross Weight: {money(result['total_gross'], 2)} KG\n"
+            f"Destination: {data['destination']}\n\n"
+            f"FINAL OFFER PRICE: {money(result['customer_price'], 2)} USD/KG\n"
+            f"TOTAL SHIPMENT VALUE: {money(result['shipment_value'], 2)} USD\n\n"
+            "TAMANA TEJARAT ARMAGHAN (T.T.A)\n"
+            "Bandar Abbas, Iran\n"
+            "Mobile: +98 939 625 5418"
         )
         await query.message.reply_text(customer_text)
 
@@ -494,6 +555,7 @@ def main():
             SEA: [MessageHandler(filters.TEXT & ~filters.COMMAND, sea)],
             FX: [MessageHandler(filters.TEXT & ~filters.COMMAND, fx)],
             DESTINATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, destination)],
+            CUSTOMER: [MessageHandler(filters.TEXT & ~filters.COMMAND, customer_name)],
         },
         fallbacks=[CommandHandler("cancel", cancel)]
     )

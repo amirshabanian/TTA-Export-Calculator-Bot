@@ -90,3 +90,21 @@ If a token is accidentally exposed, revoke it in BotFather and create a new toke
 ## License
 
 You may adapt this project for your own export-cost calculations.
+
+
+## Customer quotation output
+
+After a calculation, the operator can press `📄 خروجی مشتری | Customer Quotation`. The bot sends a customer-safe Telegram message and a PDF quotation. The customer copy contains only product, packaging, packages, gross weight, destination, final USD/KG offer and total shipment value. Internal product price, packaging/labor, profit, inland freight, customs, sea freight, exchange rate and landed cost are never included.
+
+### Update
+Replace `bot.py` and `requirements.txt` in GitHub and commit. Railway will redeploy automatically if Auto Deploy is enabled. Keep `TELEGRAM_BOT_TOKEN` only in Railway Variables; never upload the token to GitHub.
+
+
+## v5.0.0 - Customer quotation improvements
+
+- Customer name is now requested before generating the quotation.
+- Customer-facing PDF is English-only to avoid missing Persian-font squares.
+- Added T.T.A company information and Bandar Abbas address.
+- Added company mobile number in international format.
+- Added company logo file (`tta_logo.png`).
+- Customer-facing output continues to hide all internal purchase costs, operating costs and profit margin.
