@@ -1,6 +1,12 @@
 import os
 import logging
 from decimal import Decimal, InvalidOperation, ROUND_UP
+from datetime import datetime
+
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -280,39 +286,92 @@ async def fx(update, context):
     )
 
 
+def create_customer_pdf(data, result, path):
+    """Create a customer-safe quotation. Internal costs and profit are never shown."""
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle("TTATitle", parent=styles["Title"], fontSize=18,
+                           leading=22, alignment=1, textColor=colors.white)
+    body = ParagraphStyle("TTABody", parent=styles["BodyText"], fontSize=10,
+                          leading=14)
+    big = ParagraphStyle("TTABig", parent=styles["Title"], fontSize=25,
+                         leading=30, alignment=1)
+
+    doc = SimpleDocTemplate(path, pagesize=A4, rightMargin=36, leftMargin=36,
+                            topMargin=36, bottomMargin=36)
+    story = []
+    header = Table([
+        [Paragraph("T.T.A EXPORT QUOTATION", title)],
+        [Paragraph("Tamana Tejarat Armaghan | تمنا تجارت ارمغان", body)]
+    ], colWidths=[520])
+    header.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#17365D")),
+        ("BACKGROUND", (0,1), (-1,1), colors.HexColor("#D9EAF7")),
+        ("ALIGN", (0,0), (-1,-1), "CENTER"),
+        ("TOPPADDING", (0,0), (-1,-1), 10),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 10),
+    ]))
+    story += [header, Spacer(1, 18)]
+
+    rows = [
+        ["Quotation No. | شماره", datetime.now().strftime("TTA-%Y%m%d-%H%M")],
+        ["Date | تاریخ", datetime.now().strftime("%Y/%m/%d")],
+        ["Product | محصول", data["product"]],
+        ["Packaging | بسته‌بندی", data["packaging"]],
+        ["Packages | تعداد بسته", money(to_decimal(data["packages"]), 0)],
+        ["Gross Weight | وزن ناخالص", f"{money(result['total_gross'], 2)} KG"],
+        ["Destination | مقصد", data["destination"]],
+    ]
+    table = Table(rows, colWidths=[245, 275])
+    table.setStyle(TableStyle([
+        ("GRID", (0,0), (-1,-1), .5, colors.HexColor("#B7B7B7")),
+        ("BACKGROUND", (0,0), (0,-1), colors.HexColor("#D9EAF7")),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("FONTSIZE", (0,0), (-1,-1), 9),
+        ("TOPPADDING", (0,0), (-1,-1), 8),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+    ]))
+    story += [table, Spacer(1, 20)]
+
+    offer = Table([
+        [Paragraph("FINAL OFFER PRICE | قیمت نهایی", body)],
+        [Paragraph(f"{money(result['customer_price'], 2)} USD / KG", big)],
+        [Paragraph(f"Total Shipment Value | ارزش کل محموله: "
+                    f"{money(result['shipment_value'], 2)} USD", body)],
+    ], colWidths=[520])
+    offer.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#E2F0D9")),
+        ("BOX", (0,0), (-1,-1), .8, colors.HexColor("#70AD47")),
+        ("ALIGN", (0,0), (-1,-1), "CENTER"),
+        ("TOPPADDING", (0,0), (-1,-1), 10),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 10),
+    ]))
+    story += [offer, Spacer(1, 18)]
+    story.append(Paragraph(
+        "This customer copy contains the final commercial offer only. "
+        "Internal purchase costs, operating costs and profit margin are excluded.",
+        body
+    ))
+    doc.build(story)
+
+
 async def destination(update, context):
     context.user_data["destination"] = update.message.text.strip()
 
     data = context.user_data.copy()
     result = calculate(data)
 
+    context.user_data["last_result"] = result
+
     text = (
-        "📊 T.T.A EXPORT CALCULATOR\n\n"
-        f"محصول | Product: {data['product']}\n"
-        f"بسته‌بندی | Packaging: {data['packaging']}\n"
-        f"تعداد بسته | Packages: {money(to_decimal(data['packages']), 0)}\n"
-        f"وزن ناخالص کل | Total Gross Weight: "
-        f"{money(result['total_gross'], 2)} KG\n\n"
-        f"قیمت محصول | Product Price: "
-        f"{money(to_decimal(data['product_price']), 0)} Toman/KG\n"
-        f"بسته‌بندی و کارگر | Packaging & Labor: "
-        f"{money(to_decimal(data['pack_labor']), 0)} Toman/KG\n"
-        f"حاشیه سود | Product Profit: "
-        f"{money(to_decimal(data['profit']), 0)} Toman/KG\n"
-        f"قیمت محصول در مبدأ | Origin Price: "
-        f"{money(result['origin_price_kg'], 0)} Toman/KG\n\n"
-        f"هزینه تمام‌شده | Landed Cost: "
-        f"{money(result['cost_usd_kg'], 3)} USD/KG\n"
-        f"قیمت پیشنهادی مشتری | Customer Price: "
-        f"{money(result['customer_price'], 2)} USD/KG\n"
-        f"ارزش کل محموله | Shipment Value: "
-        f"{money(result['shipment_value'], 2)} USD\n\n"
-        f"مقصد | Destination: {data['destination']}\n\n"
-        "ℹ️ مبنای محاسبه این نسخه وزن ناخالص است.\n"
-        "Calculation basis: gross weight."
+        "🔐 محاسبه داخلی انجام شد | Internal calculation completed\n\n"
+        f"هزینه تمام‌شده | Landed Cost: {money(result['cost_usd_kg'], 3)} USD/KG\n"
+        f"قیمت نهایی مشتری | Final Customer Price: {money(result['customer_price'], 2)} USD/KG\n\n"
+        "جزئیات خرید، بسته‌بندی، سود و سایر هزینه‌های داخلی "
+        "در خروجی مشتری نمایش داده نمی‌شود."
     )
 
     keyboard = [
+        [InlineKeyboardButton("📄 خروجی مشتری | Customer Quotation", callback_data="customer_offer")],
         [InlineKeyboardButton("🧮 محاسبه جدید | New Calculation", callback_data="new")],
         [InlineKeyboardButton("📋 نمایش فرمول | Show Formula", callback_data="formula")],
     ]
@@ -347,6 +406,41 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "حمل دریایی: دلار | Sea freight: USD\n\n"
             "قیمت پیشنهادی مشتری به‌صورت خودکار محاسبه می‌شود."
         )
+        return ConversationHandler.END
+
+    if query.data == "customer_offer":
+        data = context.user_data
+        result = context.user_data.get("last_result")
+        if not data.get("product") or not result:
+            await query.message.reply_text(
+                "ابتدا یک محاسبه انجام دهید.\nPlease complete a calculation first."
+            )
+            return ConversationHandler.END
+
+        customer_text = (
+            "📄 T.T.A EXPORT QUOTATION\n\n"
+            f"Product | محصول: {data['product']}\n"
+            f"Packaging | بسته‌بندی: {data['packaging']}\n"
+            f"Packages | تعداد بسته: {money(to_decimal(data['packages']), 0)}\n"
+            f"Gross Weight | وزن ناخالص: {money(result['total_gross'], 2)} KG\n"
+            f"Destination | مقصد: {data['destination']}\n\n"
+            f"FINAL OFFER PRICE | قیمت نهایی: {money(result['customer_price'], 2)} USD/KG\n"
+            f"Total Shipment Value | ارزش کل محموله: {money(result['shipment_value'], 2)} USD\n\n"
+            "T.T.A | Tamana Tejarat Armaghan"
+        )
+        await query.message.reply_text(customer_text)
+
+        pdf_path=f"/tmp/TTA_Customer_Quotation_{query.from_user.id}.pdf"
+        create_customer_pdf(data, result, pdf_path)
+        with open(pdf_path, "rb") as f:
+            await query.message.reply_document(
+                f, filename="TTA_Customer_Quotation.pdf",
+                caption="📄 T.T.A Customer Quotation"
+            )
+        try:
+            os.remove(pdf_path)
+        except OSError:
+            pass
         return ConversationHandler.END
 
     if query.data == "formula":
