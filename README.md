@@ -108,3 +108,9 @@ Replace `bot.py` and `requirements.txt` in GitHub and commit. Railway will redep
 - Added company mobile number in international format.
 - Added company logo file (`tta_logo.png`).
 - Customer-facing output continues to hide all internal purchase costs, operating costs and profit margin.
+
+## v5.1.0 - Official company logo
+
+- Replaced the placeholder/profile logo with the official T.T.A company logo supplied by the company owner.
+- Customer quotation remains English-only to prevent Persian font rendering issues.
+- Customer PDF continues to show only customer-facing commercial information and hides internal costs and profit.
