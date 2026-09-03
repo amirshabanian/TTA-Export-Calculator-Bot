@@ -1,8 +1,8 @@
-# 🇮🇷🇬🇧 TTA Export Calculator v5.3.0
+# 🇮🇷🇬🇧 TTA Export Calculator v5.4.0
 
 A bilingual Persian/English Telegram bot for export landed-cost calculation and customer-safe quotation generation.
 
-## What is new in v5.3.0?
+## What is new in v5.4.0?
 
 ### 🚢 Sea freight payment method
 The calculator now supports two sea-freight payment methods:
@@ -181,7 +181,7 @@ You may adapt this project for your own export-cost calculations.
 
 ## Version history
 
-### v5.3.0
+### v5.4.0
 - Sea freight payment method selector
 - Tehran USD + configurable tax/payment charge (default 3%)
 - UAE AED payment conversion with editable USD/AED rate (default 3.685)

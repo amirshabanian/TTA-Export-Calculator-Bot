@@ -9,14 +9,14 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ContextTypes, ConversationHandler, filters
 )
 
 # ============================================================
-# T.T.A EXPORT CALCULATOR v5.3.0
+# T.T.A EXPORT CALCULATOR v5.4.0
 # Multi-user / bilingual Telegram bot
 #
 # Environment variable required:
@@ -31,6 +31,13 @@ DB_PATH = os.getenv("TTA_DB_PATH", "tta_bot.db")
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("tta-export-calculator")
+
+# Optional creator contact settings. Set these in Railway Variables so the
+# public bot can show the correct creator contact without hard-coding it.
+CREATOR_NAME = os.getenv("TTA_CREATOR_NAME", "Bot Creator")
+CREATOR_PHONE = os.getenv("TTA_CREATOR_PHONE", "")
+CREATOR_TELEGRAM = os.getenv("TTA_CREATOR_TELEGRAM", "")
+CREATOR_WHATSAPP = os.getenv("TTA_CREATOR_WHATSAPP", "")
 
 (
     PRODUCT, PACKAGING, PACKAGES, GROSS_KG,
@@ -175,18 +182,61 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("🧮 محاسبه جدید | New Calculation", callback_data="new")],
-        [InlineKeyboardButton("🏢 مشخصات شرکت | Company Profile", callback_data="profile")],
+        [InlineKeyboardButton("🏢 پروفایل شرکت | Company Profile", callback_data="profile")],
+        [InlineKeyboardButton("📞 ارتباط با سازنده | Contact Creator", callback_data="contact")],
         [InlineKeyboardButton("ℹ️ راهنما | Help", callback_data="help")],
     ]
 
-    status = "پروفایل شرکت تنظیم شده است." if profile else "ابتدا پروفایل شرکت خود را تنظیم کنید."
+    status = (
+        "✅ پروفایل شرکت شما آماده است."
+        if profile
+        else "⚠️ برای صدور Customer Quotation، ابتدا پروفایل شرکت را تنظیم کنید."
+    )
     await update.message.reply_text(
-        "🇮🇷 T.T.A Export Calculator 🇬🇧\n\n"
-        "محاسبه قیمت تمام‌شده صادرات برای محصولات مختلف.\n"
-        "Export landed-cost calculator for different products.\n\n"
-        "خرما | Dates • سیب | Apples • کیوی | Kiwi • انجیر | Figs • "
-        "کشمش | Raisins • ...\n\n"
-        f"{status}",
+        "🌿 T.T.A EXPORT CALCULATOR 🌿\n\n"
+        "به ربات محاسبه قیمت صادرات خوش آمدید.\n"
+        "Welcome to the Export Cost Calculator.\n\n"
+        "📦 محاسبه قیمت تمام‌شده صادرات\n"
+        "💱 محاسبه هزینه‌های ارزی\n"
+        "🚢 لحاظ کردن هزینه حمل دریایی\n"
+        "📄 تهیه Customer Quotation\n\n"
+        f"{status}\n\n"
+        "لطفاً یکی از گزینه‌های زیر را انتخاب کنید 👇",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+def creator_contact_text():
+    lines = [
+        "📞 ارتباط با سازنده | Contact Creator",
+        "",
+        f"👤 {CREATOR_NAME}",
+    ]
+    if CREATOR_PHONE:
+        lines.append(f"📱 Phone: {CREATOR_PHONE}")
+    if CREATOR_WHATSAPP:
+        lines.append(f"💬 WhatsApp: {CREATOR_WHATSAPP}")
+    if CREATOR_TELEGRAM:
+        lines.append(f"✈️ Telegram: {CREATOR_TELEGRAM}")
+    if not (CREATOR_PHONE or CREATOR_WHATSAPP or CREATOR_TELEGRAM):
+        lines += [
+            "",
+            "اطلاعات تماس سازنده هنوز تنظیم نشده است.",
+            "Creator contact information has not been configured yet.",
+        ]
+    return "\n".join(lines)
+
+
+async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await update.callback_query.answer()
+        message = update.callback_query.message
+    else:
+        message = update.message
+
+    keyboard = [[InlineKeyboardButton("🏠 منوی اصلی | Main Menu", callback_data="home")]]
+    await message.reply_text(
+        creator_contact_text(),
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
@@ -615,6 +665,33 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return PRODUCT
 
+    if query.data == "home":
+        profile = get_profile(update.effective_user.id)
+        keyboard = [
+            [InlineKeyboardButton("🧮 محاسبه جدید | New Calculation", callback_data="new")],
+            [InlineKeyboardButton("🏢 پروفایل شرکت | Company Profile", callback_data="profile")],
+            [InlineKeyboardButton("📞 ارتباط با سازنده | Contact Creator", callback_data="contact")],
+            [InlineKeyboardButton("ℹ️ راهنما | Help", callback_data="help")],
+        ]
+        status = "✅ پروفایل شرکت شما آماده است." if profile else "⚠️ ابتدا پروفایل شرکت را تنظیم کنید."
+        await query.message.reply_text(
+            "🌿 T.T.A EXPORT CALCULATOR 🌿\n\n"
+            "به منوی اصلی خوش آمدید.\n"
+            "Welcome to the main menu.\n\n"
+            f"{status}",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return ConversationHandler.END
+
+    if query.data == "contact":
+        await query.message.reply_text(
+            creator_contact_text(),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 منوی اصلی | Main Menu", callback_data="home")]
+            ]),
+        )
+        return ConversationHandler.END
+
     if query.data == "help":
         await query.message.reply_text(
             "📘 راهنما | Help\n\n"
@@ -823,6 +900,20 @@ async def cancel(update, context):
     return ConversationHandler.END
 
 
+async def post_init(application: Application):
+    # Keep Telegram's command menu synchronized even if BotFather commands
+    # have not been entered manually.
+    commands = [
+        BotCommand("start", "شروع / Main menu"),
+        BotCommand("new", "محاسبه جدید / New calculation"),
+        BotCommand("profile", "پروفایل شرکت / Company profile"),
+        BotCommand("contact", "ارتباط با سازنده / Contact creator"),
+        BotCommand("help", "راهنما / Help"),
+        BotCommand("cancel", "لغو عملیات / Cancel"),
+    ]
+    await application.bot.set_my_commands(commands)
+
+
 def main():
     if not TOKEN:
         raise RuntimeError(
@@ -830,7 +921,7 @@ def main():
             "Set it in Railway Variables or your hosting environment."
         )
 
-    app = Application.builder().token(TOKEN).build()
+    app = Application.builder().token(TOKEN).post_init(post_init).build()
 
     profile_conversation = ConversationHandler(
         entry_points=[
@@ -878,11 +969,12 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("contact", contact))
     app.add_handler(profile_conversation)
     app.add_handler(calculation_conversation)
     app.add_handler(CallbackQueryHandler(buttons))
 
-    log.info("TTA Export Calculator v5.3.0 started.")
+    log.info("TTA Export Calculator v5.4.0 started.")
     app.run_polling()
 
 
