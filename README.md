@@ -1,8 +1,16 @@
-# 🇮🇷🇬🇧 TTA Export Calculator v5.2.0
+# 🇮🇷🇬🇧 TTA Export Calculator v5.3.0
 
 A bilingual Persian/English Telegram bot for export landed-cost calculation and customer-safe quotation generation.
 
-## What is new in v5.2.0?
+## What is new in v5.3.0?
+
+### 🚢 Sea freight payment method
+The calculator now supports two sea-freight payment methods:
+
+- **Tehran — USD + Tax**: adds the entered tax/payment charge (default 3%) to sea freight before landed-cost calculation.
+- **UAE — AED**: converts the USD-denominated sea freight to AED using an editable USD/AED rate (default 3.685). The AED conversion is treated as a payment-currency conversion, so it does not multiply the USD-equivalent cost again.
+
+The UAE central bank maintains the AED/USD peg around 3.672–3.673; 3.685 is kept as the practical editable rate for the actual payment method.
 
 ### 👤 Multi-user company profiles
 Each Telegram user can save their own:
@@ -44,11 +52,13 @@ These costs are included in the internal landed-cost calculation but are **never
 8. Inland freight to Bandar Abbas
 9. Customs clearance
 10. Sea freight / USD
-11. Switch Bill / USD (optional)
-12. Cross Stuffing / USD (optional)
-13. USD exchange rate
-14. Destination
-15. Customer name
+11. Sea freight payment method
+12. Tehran tax/payment charge % OR UAE USD/AED rate
+13. Switch Bill / USD (optional)
+14. Cross Stuffing / USD (optional)
+15. USD exchange rate / Toman
+16. Destination
+17. Customer name
 
 ## Calculation basis
 
@@ -62,9 +72,23 @@ The bot uses **GROSS WEIGHT** as the commercial calculation basis.
 
 `Product Price + Packaging & Labor + Product Profit`
 
+### Effective Sea Freight
+
+For Tehran:
+
+`Sea Freight × (1 + Tehran Tax/Payment Charge %)`
+
+For UAE:
+
+`Effective Sea Freight USD = Sea Freight USD`
+
+The bot also calculates the actual AED payment amount:
+
+`Sea Freight USD × USD/AED Rate`
+
 ### Export Freight in USD
 
-`Sea Freight + Switch Bill + Cross Stuffing`
+`Effective Sea Freight + Switch Bill + Cross Stuffing`
 
 ### Landed Cost
 
@@ -96,6 +120,7 @@ The following are intentionally hidden:
 - Inland freight
 - Customs clearance
 - Sea freight
+- Sea freight payment method / tax / AED rate
 - Switch Bill cost
 - Cross Stuffing cost
 - USD exchange rate
@@ -155,6 +180,13 @@ If a token is exposed, revoke it in BotFather and create a new token, then updat
 You may adapt this project for your own export-cost calculations.
 
 ## Version history
+
+### v5.3.0
+- Sea freight payment method selector
+- Tehran USD + configurable tax/payment charge (default 3%)
+- UAE AED payment conversion with editable USD/AED rate (default 3.685)
+- Correct USD-equivalent landed-cost treatment for AED payment
+- Internal calculation shows effective sea freight and AED payment amount
 
 ### v5.2.0
 - Multi-user company profiles

@@ -16,7 +16,7 @@ from telegram.ext import (
 )
 
 # ============================================================
-# T.T.A EXPORT CALCULATOR v5.2.0
+# T.T.A EXPORT CALCULATOR v5.3.0
 # Multi-user / bilingual Telegram bot
 #
 # Environment variable required:
@@ -35,13 +35,13 @@ log = logging.getLogger("tta-export-calculator")
 (
     PRODUCT, PACKAGING, PACKAGES, GROSS_KG,
     PRODUCT_PRICE, PACK_LABOR, PROFIT,
-    LAND, CLEARANCE, SEA, SWITCH_BILL, CROSS_STUFFING,
-    FX, DESTINATION, CUSTOMER
-) = range(15)
+    LAND, CLEARANCE, SEA, SEA_PAYMENT, TEHRAN_TAX, UAE_AED_RATE,
+    SWITCH_BILL, CROSS_STUFFING, FX, DESTINATION, CUSTOMER
+) = range(18)
 
 (
     PROFILE_COMPANY, PROFILE_ADDRESS, PROFILE_PHONE, PROFILE_LOGO
-) = range(15, 19)
+) = range(18, 22)
 
 
 def db_connect():
@@ -114,6 +114,9 @@ def calculate(data):
     land = to_decimal(data["land"])
     clearance = to_decimal(data["clearance"])
     sea_usd = to_decimal(data["sea_usd"])
+    sea_payment_method = data.get("sea_payment_method", "tehran")
+    tehran_tax_pct = to_decimal(data.get("tehran_tax_pct", "3"))
+    uae_aed_rate = to_decimal(data.get("uae_aed_rate", "3.685"))
     switch_bill_usd = to_decimal(data.get("switch_bill_usd", "0"))
     cross_stuffing_usd = to_decimal(data.get("cross_stuffing_usd", "0"))
     fx = to_decimal(data["fx"])
@@ -125,7 +128,16 @@ def calculate(data):
     origin_price_kg = product_price + pack_labor + profit
     product_total = total_gross * origin_price_kg
 
-    extra_freight_usd = sea_usd + switch_bill_usd + cross_stuffing_usd
+    if sea_payment_method == "tehran":
+        sea_effective_usd = sea_usd * (Decimal("1") + tehran_tax_pct / Decimal("100"))
+    else:
+        # AED is only the payment currency. Converting USD freight to AED
+        # and back at the entered USD/AED rate leaves the USD-equivalent
+        # unchanged (unless there is a separate bank/payment spread).
+        sea_effective_usd = sea_usd
+
+    sea_aed_amount = sea_usd * uae_aed_rate if sea_payment_method == "uae" else Decimal("0")
+    extra_freight_usd = sea_effective_usd + switch_bill_usd + cross_stuffing_usd
     freight_local = extra_freight_usd * fx
     export_total = land + clearance + freight_local
     total_cost = product_total + export_total
@@ -141,6 +153,11 @@ def calculate(data):
         "total_gross": total_gross,
         "origin_price_kg": origin_price_kg,
         "product_total": product_total,
+        "sea_payment_method": sea_payment_method,
+        "tehran_tax_pct": tehran_tax_pct,
+        "uae_aed_rate": uae_aed_rate,
+        "sea_effective_usd": sea_effective_usd,
+        "sea_aed_amount": sea_aed_amount,
         "extra_freight_usd": extra_freight_usd,
         "freight_local": freight_local,
         "export_total": export_total,
@@ -322,12 +339,85 @@ async def clearance(update, context):
 async def sea(update, context):
     return await numeric_field(
         update, context, "sea_usd",
+        "روش پرداخت کرایه دریایی را انتخاب کنید.\n"
+        "Choose the sea freight payment method.\n\n"
+        "1️⃣ تهران — USD + 3% Tax\n"
+        "2️⃣ UAE — AED\n\n"
+        "عدد 1 یا 2 را ارسال کنید. | Send 1 or 2.",
+        SEA
+    )
+
+
+async def sea_payment(update, context):
+    value = update.message.text.strip().lower()
+    if value in {"1", "تهران", "tehran", "iran"}:
+        context.user_data["sea_payment_method"] = "tehran"
+        await update.message.reply_text(
+            "درصد مالیات/هزینه پرداخت کرایه در تهران را وارد کنید.\n"
+            "Enter Tehran freight tax/payment charge %.\n\n"
+            "مقدار پیش‌فرض: 3\n"
+            "Default: 3\n\n"
+            "مثال | Example: 3"
+        )
+        return TEHRAN_TAX
+    if value in {"2", "امارات", "uae", "dubai", "ابوظبی"}:
+        context.user_data["sea_payment_method"] = "uae"
+        await update.message.reply_text(
+            "نرخ تبدیل دلار به درهم را وارد کنید.\n"
+            "Enter USD/AED payment rate.\n\n"
+            "پیش‌فرض پیشنهادی: 3.685 AED/USD\n"
+            "Suggested default: 3.685 AED/USD\n\n"
+            "مثال | Example: 3.685"
+        )
+        return UAE_AED_RATE
+    await update.message.reply_text(
+        "❌ انتخاب نامعتبر است.\n"
+        "Please send 1 for Tehran or 2 for UAE."
+    )
+    return SEA_PAYMENT
+
+
+async def tehran_tax(update, context):
+    try:
+        value = to_decimal(update.message.text)
+        if value < 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text(
+            "❌ درصد نامعتبر است. یک عدد صفر یا بیشتر وارد کنید.\n"
+            "Please enter a valid non-negative percentage."
+        )
+        return TEHRAN_TAX
+    context.user_data["tehran_tax_pct"] = update.message.text.strip()
+    await update.message.reply_text(
         "هزینه Switch Bill of Lading را به دلار وارد کنید.\n"
         "Enter Switch Bill of Lading cost in USD.\n\n"
         "اگر نیاز نیست، 0 وارد کنید. | If not applicable, enter 0.\n"
-        "مثال | Example: 150",
-        SEA
+        "مثال | Example: 150"
     )
+    return SWITCH_BILL
+
+
+async def uae_aed_rate(update, context):
+    try:
+        value = to_decimal(update.message.text)
+        if value <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text(
+            "❌ نرخ نامعتبر است.\n"
+            "Please enter a valid USD/AED rate greater than zero.\n\n"
+            "مثال | Example: 3.685"
+        )
+        return UAE_AED_RATE
+    context.user_data["uae_aed_rate"] = update.message.text.strip()
+    await update.message.reply_text(
+        "هزینه Switch Bill of Lading را به دلار وارد کنید.\n"
+        "Enter Switch Bill of Lading cost in USD.\n\n"
+        "اگر نیاز نیست، 0 وارد کنید. | If not applicable, enter 0.\n"
+        "مثال | Example: 150"
+    )
+    return SWITCH_BILL
 
 
 async def switch_bill(update, context):
@@ -387,8 +477,16 @@ async def customer_name(update, context):
 
     context.user_data["last_result"] = result
 
+    payment_label = "Tehran — USD + Tax" if result.get("sea_payment_method") == "tehran" else "UAE — AED"
+    payment_detail = (
+        f"Tehran tax: {money(result['tehran_tax_pct'], 2)}% | Effective sea freight: {money(result['sea_effective_usd'], 2)} USD"
+        if result.get("sea_payment_method") == "tehran"
+        else f"USD/AED: {money(result['uae_aed_rate'], 3)} | Sea freight payment: {money(result['sea_aed_amount'], 2)} AED"
+    )
     text = (
         "🔐 محاسبه داخلی انجام شد | Internal calculation completed\n\n"
+        f"Sea Freight Payment: {payment_label}\n"
+        f"{payment_detail}\n\n"
         f"هزینه تمام‌شده | Landed Cost: {money(result['cost_usd_kg'], 3)} USD/KG\n"
         f"قیمت نهایی مشتری | Final Customer Price: {money(result['customer_price'], 2)} USD/KG\n\n"
         "قیمت‌های خرید، بسته‌بندی، سود و هزینه‌های داخلی در خروجی مشتری نمایش داده نمی‌شوند."
@@ -524,7 +622,8 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "This bot calculates export landed cost.\n\n"
             "مبنای وزن: ناخالص | Weight basis: Gross\n"
             "واحد قیمت داخلی: تومان | Local currency: Toman\n"
-            "حمل دریایی، Switch Bill و Cross Stuffing: دلار | USD\n\n"
+            "حمل دریایی، Switch Bill و Cross Stuffing: دلار | USD\n"
+            "پرداخت حمل دریایی: تهران (USD + Tax) یا UAE (AED)\n\n"
             "قیمت پیشنهادی مشتری به‌صورت خودکار محاسبه می‌شود.\n"
             "Customer price is calculated automatically.\n\n"
             "هر کاربر می‌تواند مشخصات شرکت و لوگوی خودش را ثبت کند."
@@ -593,8 +692,11 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Product Price + Packaging & Labor + Product Profit\n\n"
             "وزن ناخالص کل / Total Gross Weight =\n"
             "Packages × Gross Weight per Package\n\n"
+            "Sea Freight Effective USD =\n"
+            "Tehran: Sea Freight × (1 + Tax%)\n"
+            "UAE: Sea Freight (AED is payment currency only)\n\n"
             "Export Freight USD =\n"
-            "Sea Freight + Switch Bill + Cross Stuffing\n\n"
+            "Effective Sea Freight + Switch Bill + Cross Stuffing\n\n"
             "Landed Cost USD/KG =\n"
             "(Product Cost + Inland Freight + Customs + Export Freight×FX)\n"
             "÷ Total Gross Weight ÷ FX\n\n"
@@ -763,6 +865,9 @@ def main():
             LAND: [MessageHandler(filters.TEXT & ~filters.COMMAND, land)],
             CLEARANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, clearance)],
             SEA: [MessageHandler(filters.TEXT & ~filters.COMMAND, sea)],
+            SEA_PAYMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, sea_payment)],
+            TEHRAN_TAX: [MessageHandler(filters.TEXT & ~filters.COMMAND, tehran_tax)],
+            UAE_AED_RATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, uae_aed_rate)],
             SWITCH_BILL: [MessageHandler(filters.TEXT & ~filters.COMMAND, switch_bill)],
             CROSS_STUFFING: [MessageHandler(filters.TEXT & ~filters.COMMAND, cross_stuffing)],
             FX: [MessageHandler(filters.TEXT & ~filters.COMMAND, fx)],
@@ -777,7 +882,7 @@ def main():
     app.add_handler(calculation_conversation)
     app.add_handler(CallbackQueryHandler(buttons))
 
-    log.info("TTA Export Calculator v5.2.0 started.")
+    log.info("TTA Export Calculator v5.3.0 started.")
     app.run_polling()
 
 
