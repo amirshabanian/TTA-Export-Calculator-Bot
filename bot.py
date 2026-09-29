@@ -21,7 +21,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, filters
 )
 
-VERSION = "6.0.0"
+VERSION = "6.0.1"
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DB_PATH = os.getenv("TTA_DB_PATH", "tta_bot.db")
 TRIAL_DAYS = int(os.getenv("TTA_TRIAL_DAYS", "7"))
@@ -346,11 +346,18 @@ async def admin_command(update, context):
 
 async def begin(update, context):
     ensure_user(update.effective_user)
+    msg = update.callback_query.message if update.callback_query else update.message
     if not access_allowed(update.effective_user.id):
-        await update.message.reply_text("🔒 دسترسی شما به پایان رسیده است. از بخش License یک کد معتبر وارد کنید.",reply_markup=main_keyboard(update.effective_user.id)); return ConversationHandler.END
+        await msg.reply_text("🔒 دسترسی شما به پایان رسیده است. از بخش License یک کد معتبر وارد کنید.", reply_markup=main_keyboard(update.effective_user.id))
+        return ConversationHandler.END
     if not get_profile(update.effective_user.id):
-        await update.message.reply_text("🏢 ابتدا Company Profile را تکمیل کنید.",reply_markup=main_keyboard(update.effective_user.id)); return ConversationHandler.END
-    context.user_data.clear(); await update.message.reply_text("نام محصول را وارد کنید.\nEnter product name."); return PRODUCT
+        await msg.reply_text("🏢 ابتدا Company Profile را تکمیل کنید.", reply_markup=main_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    if update.callback_query:
+        await update.callback_query.answer()
+    context.user_data.clear()
+    await msg.reply_text("نام محصول را وارد کنید.\nEnter product name.")
+    return PRODUCT
 
 
 async def text_field(update, context, key, prompt, state):
