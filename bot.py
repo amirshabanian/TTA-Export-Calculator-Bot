@@ -36,12 +36,12 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("tta-export-calculator")
 
 (
-    PRODUCT, PACKAGING, PACKAGES, GROSS_KG,
+    PRODUCT, PACKAGING, PACKAGES, GROSS_KG, NET_KG,
     PRODUCT_PRICE, PACK_LABOR, PROFIT,
     LAND, CLEARANCE, SEA, SEA_PAYMENT, TEHRAN_TAX, UAE_AED_RATE,
     SWITCH_BILL, CROSS_STUFFING, FX, DESTINATION, CUSTOMER,
-) = range(18)
-PROFILE_COMPANY, PROFILE_ADDRESS, PROFILE_PHONE, PROFILE_LOGO = range(18, 22)
+) = range(19)
+PROFILE_COMPANY, PROFILE_ADDRESS, PROFILE_PHONE, PROFILE_LOGO = range(19, 23)
 
 
 def now_utc():
@@ -245,17 +245,17 @@ def money(value, decimals=0): return f"{value:,.{decimals}f}"
 def calculate(data):
     packages=to_decimal(data["packages"]); gross=to_decimal(data["gross_kg"]); product=to_decimal(data["product_price"])
     pack=to_decimal(data["pack_labor"]); profit=to_decimal(data["profit"]); land=to_decimal(data["land"]); clearance=to_decimal(data["clearance"])
-    sea=to_decimal(data["sea_usd"]); fx=to_decimal(data["fx"]); method=data.get("sea_payment_method","tehran")
+    net=to_decimal(data["net_kg"]); sea=to_decimal(data["sea_usd"]); fx=to_decimal(data["fx"]); method=data.get("sea_payment_method","tehran")
     tax=to_decimal(data.get("tehran_tax_pct","3")); aed=to_decimal(data.get("uae_aed_rate","3.685"))
     switch=to_decimal(data.get("switch_bill_usd","0")); cross=to_decimal(data.get("cross_stuffing_usd","0"))
-    if packages<=0 or gross<=0 or fx<=0: raise ValueError("Packages, gross weight and FX must be positive")
-    total_gross=packages*gross; origin=product+pack+profit; product_total=total_gross*origin
+    if packages<=0 or gross<=0 or net<=0 or net>gross or fx<=0: raise ValueError("Packages, weights and FX must be valid")
+    total_gross=packages*gross; total_net=packages*net; origin=product+pack+profit; product_total=total_gross*origin
     effective_sea=sea*(Decimal("1")+tax/Decimal("100")) if method=="tehran" else sea
     sea_aed=sea*aed if method=="uae" else Decimal("0")
     freight_usd=effective_sea+switch+cross; total_cost=product_total+land+clearance+freight_usd*fx
     cost_usd=(total_cost/total_gross)/fx; step=Decimal("0.05")
     offer=(cost_usd/step).to_integral_value(rounding=ROUND_UP)*step
-    return {"total_gross":total_gross,"origin_price_kg":origin,"product_total":product_total,"sea_payment_method":method,"tehran_tax_pct":tax,"uae_aed_rate":aed,"sea_effective_usd":effective_sea,"sea_aed_amount":sea_aed,"extra_freight_usd":freight_usd,"total_cost":total_cost,"cost_usd_kg":cost_usd,"customer_price":offer,"shipment_value":offer*total_gross}
+    return {"total_gross":total_gross,"total_net":total_net,"origin_price_kg":origin,"product_total":product_total,"sea_payment_method":method,"tehran_tax_pct":tax,"uae_aed_rate":aed,"sea_effective_usd":effective_sea,"sea_aed_amount":sea_aed,"extra_freight_usd":freight_usd,"total_cost":total_cost,"cost_usd_kg":cost_usd,"customer_price":offer,"shipment_value":offer*total_gross}
 
 
 def main_keyboard(user_id):
@@ -373,39 +373,60 @@ async def numeric_field(update, context, key, prompt, state):
         await update.message.reply_text("❌ عدد نامعتبر است. لطفاً عدد معتبر وارد کنید."); return state
     context.user_data[key]=update.message.text.strip(); await update.message.reply_text(prompt); return state+1
 
-async def product(update,c): return await text_field(update,c,"product","نوع بسته‌بندی را وارد کنید.\nEnter packaging type.",PACKAGING)
-async def packaging(update,c): return await text_field(update,c,"packaging","تعداد کل بسته را وارد کنید.",PACKAGES)
-async def packages(update,c): return await numeric_field(update,c,"packages","وزن ناخالص هر بسته را به KG وارد کنید.",PACKAGES)
-async def gross(update,c): return await numeric_field(update,c,"gross_kg","قیمت محصول به ازای هر KG، به تومان.",GROSS_KG)
-async def product_price(update,c): return await numeric_field(update,c,"product_price","هزینه بسته‌بندی و کارگر به ازای هر KG، به تومان.",PRODUCT_PRICE)
-async def pack_labor(update,c): return await numeric_field(update,c,"pack_labor","حاشیه سود محصول به ازای هر KG، به تومان.",PACK_LABOR)
-async def profit(update,c): return await numeric_field(update,c,"profit","حمل زمینی تا بندرعباس، به تومان.",PROFIT)
-async def land(update,c): return await numeric_field(update,c,"land","هزینه ترخیص، به تومان.",LAND)
-async def clearance(update,c): return await numeric_field(update,c,"clearance","حمل دریایی، به دلار.",CLEARANCE)
+async def product(update,c):
+    return await text_field(update,c,"product","نام / نوع محصول را وارد کنید.\nEnter product name / type.\nمثال: Dates / خرما",PACKAGING)
+async def packaging(update,c):
+    return await text_field(update,c,"packaging","نوع بسته‌بندی را وارد کنید.\nEnter packaging type.\nمثال: Carton / کارتن",PACKAGES)
+async def packages(update,c):
+    return await numeric_field(update,c,"packages","تعداد کل بسته‌ها را وارد کنید.\nEnter total number of packages.\nمثال: 3500",PACKAGES)
+async def gross(update,c):
+    return await numeric_field(update,c,"gross_kg","وزن ناخالص هر بسته را به KG وارد کنید.\nEnter gross weight per package in KG.\nمثال: 6.800",GROSS_KG)
+async def net(update,c):
+    try:
+        value=to_decimal(update.message.text)
+        gross_value=to_decimal(c.user_data.get("gross_kg", "0"))
+        if value <= 0 or gross_value <= 0 or value > gross_value:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("❌ وزن خالص نامعتبر است. باید بیشتر از صفر و حداکثر برابر وزن ناخالص باشد.\n❌ Invalid net weight. It must be greater than 0 and not exceed gross weight.")
+        return NET_KG
+    c.user_data["net_kg"]=update.message.text.strip()
+    await update.message.reply_text("قیمت خرید محصول به ازای هر KG، به تومان را وارد کنید.\nEnter product purchase price per KG in Toman.")
+    return PRODUCT_PRICE
+async def product_price(update,c):
+    return await numeric_field(update,c,"product_price","هزینه بسته‌بندی و کارگر به ازای هر KG، به تومان را وارد کنید.\nEnter packaging & labor cost per KG in Toman.",PRODUCT_PRICE)
+async def pack_labor(update,c):
+    return await numeric_field(update,c,"pack_labor","حاشیه سود محصول به ازای هر KG، به تومان را وارد کنید.\nEnter product profit margin per KG in Toman.",PACK_LABOR)
+async def profit(update,c):
+    return await numeric_field(update,c,"profit","هزینه حمل زمینی تا بندرعباس، به تومان را وارد کنید.\nEnter inland freight to Bandar Abbas in Toman.",PROFIT)
+async def land(update,c):
+    return await numeric_field(update,c,"land","هزینه ترخیص، به تومان را وارد کنید.\nEnter customs clearance cost in Toman.",LAND)
+async def clearance(update,c):
+    return await numeric_field(update,c,"clearance","هزینه حمل دریایی، به دلار را وارد کنید.\nEnter sea freight in USD.",CLEARANCE)
 
 async def sea(update,c):
-    return await numeric_field(update,c,"sea_usd","روش پرداخت را انتخاب کنید:\n1️⃣ تهران — USD + 3% Tax\n2️⃣ UAE — AED\nعدد 1 یا 2 را ارسال کنید.",SEA)
+    return await numeric_field(update,c,"sea_usd","روش پرداخت حمل دریایی را انتخاب کنید.\nSelect sea freight payment method.\n1️⃣ تهران — USD + 3% Tax\n2️⃣ UAE — AED\nعدد 1 یا 2 را ارسال کنید. / Send 1 or 2.",SEA)
 async def sea_payment(update,c):
     v=update.message.text.strip().lower()
     if v in {"1","تهران","tehran","iran"}:
-        c.user_data["sea_payment_method"]="tehran"; await update.message.reply_text("درصد مالیات/هزینه تهران را وارد کنید.\nپیش‌فرض: 3"); return TEHRAN_TAX
+        c.user_data["sea_payment_method"]="tehran"; await update.message.reply_text("درصد مالیات/هزینه تهران را وارد کنید.\nEnter Tehran tax/cost percentage.\nپیش‌فرض / Default: 3"); return TEHRAN_TAX
     if v in {"2","امارات","uae","dubai","ابوظبی"}:
-        c.user_data["sea_payment_method"]="uae"; await update.message.reply_text("نرخ USD/AED را وارد کنید.\nپیش‌فرض: 3.685"); return UAE_AED_RATE
+        c.user_data["sea_payment_method"]="uae"; await update.message.reply_text("نرخ USD/AED را وارد کنید.\nEnter USD/AED payment rate.\nپیش‌فرض / Default: 3.685"); return UAE_AED_RATE
     await update.message.reply_text("❌ فقط 1 یا 2 را ارسال کنید."); return SEA_PAYMENT
 async def tehran_tax(update,c):
     try:
         if to_decimal(update.message.text)<0: raise ValueError
     except ValueError: await update.message.reply_text("❌ درصد نامعتبر است."); return TEHRAN_TAX
-    c.user_data["tehran_tax_pct"]=update.message.text.strip(); await update.message.reply_text("هزینه Switch Bill به USD را وارد کنید؛ اگر نیست 0."); return SWITCH_BILL
+    c.user_data["tehran_tax_pct"]=update.message.text.strip(); await update.message.reply_text("هزینه Switch Bill به USD را وارد کنید؛ اگر ندارید 0 بزنید.\nEnter Switch Bill cost in USD; enter 0 if none."); return SWITCH_BILL
 async def uae_aed_rate(update,c):
     try:
         if to_decimal(update.message.text)<=0: raise ValueError
     except ValueError: await update.message.reply_text("❌ نرخ نامعتبر است."); return UAE_AED_RATE
-    c.user_data["uae_aed_rate"]=update.message.text.strip(); await update.message.reply_text("هزینه Switch Bill به USD را وارد کنید؛ اگر نیست 0."); return SWITCH_BILL
-async def switch_bill(update,c): return await numeric_field(update,c,"switch_bill_usd","هزینه Cross Stuffing به USD را وارد کنید؛ اگر نیست 0.",SWITCH_BILL)
-async def cross_stuffing(update,c): return await numeric_field(update,c,"cross_stuffing_usd","نرخ دلار به تومان را وارد کنید.",CROSS_STUFFING)
-async def fx(update,c): return await numeric_field(update,c,"fx","مقصد را وارد کنید.",FX)
-async def destination(update,c): c.user_data["destination"]=update.message.text.strip(); await update.message.reply_text("نام مشتری را وارد کنید."); return CUSTOMER
+    c.user_data["uae_aed_rate"]=update.message.text.strip(); await update.message.reply_text("هزینه Switch Bill به USD را وارد کنید؛ اگر ندارید 0 بزنید.\nEnter Switch Bill cost in USD; enter 0 if none."); return SWITCH_BILL
+async def switch_bill(update,c): return await numeric_field(update,c,"switch_bill_usd","هزینه Cross Stuffing به USD را وارد کنید؛ اگر ندارید 0 بزنید.\nEnter Cross Stuffing cost in USD; enter 0 if none.",SWITCH_BILL)
+async def cross_stuffing(update,c): return await numeric_field(update,c,"cross_stuffing_usd","نرخ دلار به تومان را وارد کنید.\nEnter USD/IRR exchange rate.",CROSS_STUFFING)
+async def fx(update,c): return await numeric_field(update,c,"fx","مقصد را وارد کنید.\nEnter destination.",FX)
+async def destination(update,c): c.user_data["destination"]=update.message.text.strip(); await update.message.reply_text("نام مشتری را وارد کنید.\nEnter customer name."); return CUSTOMER
 
 async def customer_name(update,c):
     c.user_data["customer_name"]=update.message.text.strip(); data=c.user_data.copy()
@@ -452,7 +473,7 @@ def create_customer_pdf(data,r,profile,path,logo_path=None):
     cells.append(Paragraph("<b>EXPORT QUOTATION</b>",title)); widths=[78,442] if len(cells)==2 else [520]
     h=Table([cells],colWidths=widths); h.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#17365D")),("ALIGN",(0,0),(-1,-1),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),9),("BOTTOMPADDING",(0,0),(-1,-1),9)])); story += [h,Spacer(1,8)]
     company=Table([[Paragraph(f"<b>{profile['company_name']}</b><br/>{profile['address']}<br/>Mobile: {profile['phone']}",body)]],colWidths=[520]); company.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#D9EAF7")),("ALIGN",(0,0),(-1,-1),"CENTER"),("TOPPADDING",(0,0),(-1,-1),7),("BOTTOMPADDING",(0,0),(-1,-1),7)])); story += [company,Spacer(1,15)]
-    rows=[["Quotation No.",datetime.now().strftime("TTA-%Y%m%d-%H%M")],["Date",datetime.now().strftime("%Y/%m/%d")],["Customer",data.get("customer_name","-")],["Product",data["product"]],["Packaging",data["packaging"]],["Packages",money(to_decimal(data["packages"]),0)],["Gross Weight",f"{money(r['total_gross'],2)} KG"],["Destination",data["destination"]]]
+    rows=[["Quotation No.",datetime.now().strftime("TTA-%Y%m%d-%H%M")],["Date",datetime.now().strftime("%Y/%m/%d")],["Customer",data.get("customer_name","-")],["Product",data["product"]],["Packaging",data["packaging"]],["Packages",money(to_decimal(data["packages"]),0)],["Gross Weight",f"{money(r['total_gross'],2)} KG"],["Net Weight",f"{money(r['total_net'],2)} KG"],["Destination",data["destination"]]]
     t=Table(rows,colWidths=[170,350]); t.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.5,colors.HexColor("#B7B7B7")),("BACKGROUND",(0,0),(0,-1),colors.HexColor("#D9EAF7")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("FONTSIZE",(0,0),(-1,-1),9.5),("TOPPADDING",(0,0),(-1,-1),8),("BOTTOMPADDING",(0,0),(-1,-1),8)])); story += [t,Spacer(1,20)]
     offer=Table([[Paragraph("FINAL OFFER PRICE",body)],[Paragraph(f"{money(r['customer_price'],2)} USD / KG",big)],[Paragraph(f"TOTAL SHIPMENT VALUE: {money(r['shipment_value'],2)} USD",body)]],colWidths=[520]); offer.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#E2F0D9")),("BOX",(0,0),(-1,-1),.8,colors.HexColor("#70AD47")),("ALIGN",(0,0),(-1,-1),"CENTER"),("TOPPADDING",(0,0),(-1,-1),10),("BOTTOMPADDING",(0,0),(-1,-1),10)])); story += [offer,Spacer(1,18),Paragraph("This quotation contains the final commercial offer only. Internal costs and logistics breakdown are excluded.",small)]; doc.build(story)
 
@@ -474,7 +495,7 @@ async def callback(update,c):
     if d=="customer_offer":
         data=c.user_data; r=data.get("last_result"); p=get_profile(q.from_user.id)
         if not r or not p: await q.message.reply_text("ابتدا محاسبه و پروفایل را کامل کنید."); return
-        text=(f"📄 <b>EXPORT QUOTATION</b>\n\nCustomer: {data.get('customer_name','-')}\nProduct: {data['product']}\nPackaging: {data['packaging']}\nPackages: {money(to_decimal(data['packages']),0)}\nGross Weight: {money(r['total_gross'],2)} KG\nDestination: {data['destination']}\n\n<b>FINAL OFFER PRICE: {money(r['customer_price'],2)} USD/KG</b>\nTOTAL SHIPMENT VALUE: {money(r['shipment_value'],2)} USD\n\n{p['company_name']}\n{p['address']}\nMobile: {p['phone']}")
+        text=(f"📄 <b>EXPORT QUOTATION</b>\n\nCustomer: {data.get('customer_name','-')}\nProduct: {data['product']}\nPackaging: {data['packaging']}\nPackages: {money(to_decimal(data['packages']),0)}\nGross Weight: {money(r['total_gross'],2)} KG\nNet Weight: {money(r['total_net'],2)} KG\nDestination: {data['destination']}\n\n<b>FINAL OFFER PRICE: {money(r['customer_price'],2)} USD/KG</b>\nTOTAL SHIPMENT VALUE: {money(r['shipment_value'],2)} USD\n\n{p['company_name']}\n{p['address']}\nMobile: {p['phone']}")
         await q.message.reply_text(text,parse_mode="HTML")
         logo_path=None
         if p.get("logo_file_id"):
@@ -549,7 +570,7 @@ def main():
     db_connect().close()
     app=Application.builder().token(TOKEN).post_init(post_init).build()
     profile_conv=ConversationHandler(entry_points=[CommandHandler("profile",profile_start),CallbackQueryHandler(profile_start,pattern="^profile$")],states={PROFILE_COMPANY:[MessageHandler(filters.TEXT & ~filters.COMMAND,profile_company)],PROFILE_ADDRESS:[MessageHandler(filters.TEXT & ~filters.COMMAND,profile_address)],PROFILE_PHONE:[MessageHandler(filters.TEXT & ~filters.COMMAND,profile_phone)],PROFILE_LOGO:[MessageHandler(filters.PHOTO,profile_logo),MessageHandler(filters.TEXT & ~filters.COMMAND,profile_logo)]},fallbacks=[CommandHandler("cancel",cancel)])
-    calc_conv=ConversationHandler(entry_points=[CommandHandler("new",begin),CallbackQueryHandler(begin,pattern="^new$")],states={PRODUCT:[MessageHandler(filters.TEXT & ~filters.COMMAND,product)],PACKAGING:[MessageHandler(filters.TEXT & ~filters.COMMAND,packaging)],PACKAGES:[MessageHandler(filters.TEXT & ~filters.COMMAND,packages)],GROSS_KG:[MessageHandler(filters.TEXT & ~filters.COMMAND,gross)],PRODUCT_PRICE:[MessageHandler(filters.TEXT & ~filters.COMMAND,product_price)],PACK_LABOR:[MessageHandler(filters.TEXT & ~filters.COMMAND,pack_labor)],PROFIT:[MessageHandler(filters.TEXT & ~filters.COMMAND,profit)],LAND:[MessageHandler(filters.TEXT & ~filters.COMMAND,land)],CLEARANCE:[MessageHandler(filters.TEXT & ~filters.COMMAND,clearance)],SEA:[MessageHandler(filters.TEXT & ~filters.COMMAND,sea)],SEA_PAYMENT:[MessageHandler(filters.TEXT & ~filters.COMMAND,sea_payment)],TEHRAN_TAX:[MessageHandler(filters.TEXT & ~filters.COMMAND,tehran_tax)],UAE_AED_RATE:[MessageHandler(filters.TEXT & ~filters.COMMAND,uae_aed_rate)],SWITCH_BILL:[MessageHandler(filters.TEXT & ~filters.COMMAND,switch_bill)],CROSS_STUFFING:[MessageHandler(filters.TEXT & ~filters.COMMAND,cross_stuffing)],FX:[MessageHandler(filters.TEXT & ~filters.COMMAND,fx)],DESTINATION:[MessageHandler(filters.TEXT & ~filters.COMMAND,destination)],CUSTOMER:[MessageHandler(filters.TEXT & ~filters.COMMAND,customer_name)]},fallbacks=[CommandHandler("cancel",cancel)])
+    calc_conv=ConversationHandler(entry_points=[CommandHandler("new",begin),CallbackQueryHandler(begin,pattern="^new$")],states={PRODUCT:[MessageHandler(filters.TEXT & ~filters.COMMAND,product)],PACKAGING:[MessageHandler(filters.TEXT & ~filters.COMMAND,packaging)],PACKAGES:[MessageHandler(filters.TEXT & ~filters.COMMAND,packages)],GROSS_KG:[MessageHandler(filters.TEXT & ~filters.COMMAND,gross)],NET_KG:[MessageHandler(filters.TEXT & ~filters.COMMAND,net)],PRODUCT_PRICE:[MessageHandler(filters.TEXT & ~filters.COMMAND,product_price)],PACK_LABOR:[MessageHandler(filters.TEXT & ~filters.COMMAND,pack_labor)],PROFIT:[MessageHandler(filters.TEXT & ~filters.COMMAND,profit)],LAND:[MessageHandler(filters.TEXT & ~filters.COMMAND,land)],CLEARANCE:[MessageHandler(filters.TEXT & ~filters.COMMAND,clearance)],SEA:[MessageHandler(filters.TEXT & ~filters.COMMAND,sea)],SEA_PAYMENT:[MessageHandler(filters.TEXT & ~filters.COMMAND,sea_payment)],TEHRAN_TAX:[MessageHandler(filters.TEXT & ~filters.COMMAND,tehran_tax)],UAE_AED_RATE:[MessageHandler(filters.TEXT & ~filters.COMMAND,uae_aed_rate)],SWITCH_BILL:[MessageHandler(filters.TEXT & ~filters.COMMAND,switch_bill)],CROSS_STUFFING:[MessageHandler(filters.TEXT & ~filters.COMMAND,cross_stuffing)],FX:[MessageHandler(filters.TEXT & ~filters.COMMAND,fx)],DESTINATION:[MessageHandler(filters.TEXT & ~filters.COMMAND,destination)],CUSTOMER:[MessageHandler(filters.TEXT & ~filters.COMMAND,customer_name)]},fallbacks=[CommandHandler("cancel",cancel)])
     app.add_handler(CommandHandler("start",start)); app.add_handler(CommandHandler("contact",creator_contact)); app.add_handler(CommandHandler("help",help_command)); app.add_handler(CommandHandler("myid",myid)); app.add_handler(CommandHandler("license",license_command)); app.add_handler(CommandHandler("admin",admin_command)); app.add_handler(profile_conv); app.add_handler(calc_conv)
     app.add_handler(CallbackQueryHandler(admin_action,pattern=r"^(lic30|lic90|lic365|licperm|liclist|userlist)$")); app.add_handler(CallbackQueryHandler(callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,route_text))
