@@ -1,8 +1,14 @@
+# T.T.A EXPORT CALCULATOR v6.0.0
+# Professional menu + 7-day trial + per-user licenses + admin panel
+# Telegram bot token and admin IDs must be supplied through environment variables.
+
 import os
 import logging
 import sqlite3
+import secrets
+import string
 from decimal import Decimal, InvalidOperation, ROUND_UP
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -15,44 +21,50 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, filters
 )
 
-# ============================================================
-# T.T.A EXPORT CALCULATOR v5.4.0
-# Multi-user / bilingual Telegram bot
-#
-# Environment variable required:
-#   TELEGRAM_BOT_TOKEN
-#
-# User company profiles are stored in SQLite (tta_bot.db).
-# Never put your Telegram bot token inside this file or GitHub.
-# ============================================================
-
+VERSION = "6.0.0"
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DB_PATH = os.getenv("TTA_DB_PATH", "tta_bot.db")
+TRIAL_DAYS = int(os.getenv("TTA_TRIAL_DAYS", "7"))
+ADMIN_IDS = {x.strip() for x in os.getenv("TTA_ADMIN_IDS", "").split(",") if x.strip()}
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("tta-export-calculator")
-
-# Optional creator contact settings. Set these in Railway Variables so the
-# public bot can show the correct creator contact without hard-coding it.
-CREATOR_NAME = os.getenv("TTA_CREATOR_NAME", "Bot Creator")
+CREATOR_NAME = os.getenv("TTA_CREATOR_NAME", "Amir Shabanian")
 CREATOR_PHONE = os.getenv("TTA_CREATOR_PHONE", "")
 CREATOR_TELEGRAM = os.getenv("TTA_CREATOR_TELEGRAM", "")
 CREATOR_WHATSAPP = os.getenv("TTA_CREATOR_WHATSAPP", "")
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("tta-export-calculator")
 
 (
     PRODUCT, PACKAGING, PACKAGES, GROSS_KG,
     PRODUCT_PRICE, PACK_LABOR, PROFIT,
     LAND, CLEARANCE, SEA, SEA_PAYMENT, TEHRAN_TAX, UAE_AED_RATE,
-    SWITCH_BILL, CROSS_STUFFING, FX, DESTINATION, CUSTOMER
+    SWITCH_BILL, CROSS_STUFFING, FX, DESTINATION, CUSTOMER,
 ) = range(18)
+PROFILE_COMPANY, PROFILE_ADDRESS, PROFILE_PHONE, PROFILE_LOGO = range(18, 22)
 
-(
-    PROFILE_COMPANY, PROFILE_ADDRESS, PROFILE_PHONE, PROFILE_LOGO
-) = range(18, 22)
+
+def now_utc():
+    return datetime.now(timezone.utc)
+
+
+def iso(dt):
+    return dt.astimezone(timezone.utc).isoformat() if dt else None
+
+
+def parse_dt(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).astimezone(timezone.utc)
+    except ValueError:
+        return None
 
 
 def db_connect():
     conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS company_profiles (
             user_id TEXT PRIMARY KEY,
@@ -62,921 +74,478 @@ def db_connect():
             logo_file_id TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            status TEXT NOT NULL DEFAULT 'TRIAL',
+            trial_start TEXT,
+            trial_end TEXT,
+            created_at TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            license_key TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS licenses (
+            license_key TEXT PRIMARY KEY,
+            duration_days INTEGER,
+            permanent INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'UNUSED',
+            user_id TEXT,
+            customer_name TEXT,
+            created_at TEXT NOT NULL,
+            activated_at TEXT,
+            expires_at TEXT
+        )
+    """)
     conn.commit()
     return conn
 
 
+def is_admin(user_id):
+    return str(user_id) in ADMIN_IDS
+
+
+def ensure_user(tg_user):
+    uid = str(tg_user.id)
+    conn = db_connect()
+    row = conn.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone()
+    now = now_utc()
+    if not row:
+        trial_start = now
+        trial_end = now + timedelta(days=TRIAL_DAYS)
+        conn.execute(
+            "INSERT INTO users(user_id,username,first_name,status,trial_start,trial_end,created_at,last_seen) VALUES(?,?,?,?,?,?,?,?)",
+            (uid, tg_user.username or "", tg_user.first_name or "", "TRIAL", iso(trial_start), iso(trial_end), iso(now), iso(now))
+        )
+    else:
+        conn.execute("UPDATE users SET username=?, first_name=?, last_seen=? WHERE user_id=?",
+                     (tg_user.username or "", tg_user.first_name or "", iso(now), uid))
+    conn.commit()
+    row = conn.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone()
+    conn.close()
+    return row
+
+
+def get_user(user_id):
+    conn = db_connect(); row = conn.execute("SELECT * FROM users WHERE user_id=?", (str(user_id),)).fetchone(); conn.close(); return row
+
+
 def get_profile(user_id):
     conn = db_connect()
-    row = conn.execute(
-        "SELECT company_name, address, phone, logo_file_id "
-        "FROM company_profiles WHERE user_id = ?",
-        (str(user_id),)
-    ).fetchone()
+    row = conn.execute("SELECT company_name,address,phone,logo_file_id FROM company_profiles WHERE user_id=?", (str(user_id),)).fetchone()
     conn.close()
-    if not row:
-        return None
-    return {
-        "company_name": row[0],
-        "address": row[1],
-        "phone": row[2],
-        "logo_file_id": row[3],
-    }
+    return dict(row) if row else None
 
 
 def save_profile(user_id, company_name, address, phone, logo_file_id=None):
     conn = db_connect()
-    conn.execute("""
-        INSERT INTO company_profiles (user_id, company_name, address, phone, logo_file_id)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET
-            company_name=excluded.company_name,
-            address=excluded.address,
-            phone=excluded.phone,
-            logo_file_id=excluded.logo_file_id
-    """, (str(user_id), company_name, address, phone, logo_file_id))
-    conn.commit()
-    conn.close()
+    conn.execute("""INSERT INTO company_profiles(user_id,company_name,address,phone,logo_file_id)
+                    VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
+                    company_name=excluded.company_name,address=excluded.address,
+                    phone=excluded.phone,logo_file_id=excluded.logo_file_id""",
+                 (str(user_id), company_name, address, phone, logo_file_id))
+    conn.commit(); conn.close()
 
 
-def to_decimal(value: str) -> Decimal:
+def access_state(user_id):
+    if is_admin(user_id):
+        return "ADMIN", None
+    row = get_user(user_id)
+    if not row:
+        return "TRIAL", now_utc() + timedelta(days=TRIAL_DAYS)
+    if row["license_key"]:
+        conn = db_connect()
+        lic = conn.execute("SELECT * FROM licenses WHERE license_key=?", (row["license_key"],)).fetchone()
+        conn.close()
+        if lic and lic["status"] == "ACTIVE":
+            exp = parse_dt(lic["expires_at"])
+            if lic["permanent"] or (exp and exp > now_utc()):
+                return "LICENSE", exp
+    exp = parse_dt(row["trial_end"])
+    if exp and exp > now_utc():
+        return "TRIAL", exp
+    return "EXPIRED", exp
+
+
+def access_allowed(user_id):
+    state, _ = access_state(user_id)
+    return state in {"ADMIN", "TRIAL", "LICENSE"}
+
+
+def access_message(user_id):
+    state, exp = access_state(user_id)
+    if state == "ADMIN":
+        return "👑 Administrator access"
+    if state == "TRIAL":
+        days = max(0, (exp - now_utc()).days) if exp else 0
+        return f"🎁 Trial active — {days} day(s) remaining"
+    if state == "LICENSE":
+        return "🔐 Licensed access — active"
+    return "🔒 Trial expired — license required"
+
+
+def license_key():
+    alphabet = string.ascii_uppercase + string.digits
+    while True:
+        raw = "".join(secrets.choice(alphabet) for _ in range(16))
+        key = "TTA-" + "-".join(raw[i:i+4] for i in range(0, 16, 4))
+        conn = db_connect(); exists = conn.execute("SELECT 1 FROM licenses WHERE license_key=?", (key,)).fetchone(); conn.close()
+        if not exists:
+            return key
+
+
+def create_license(duration_days=None, permanent=False, customer_name=""):
+    key = license_key(); created = now_utc()
+    expires = None if permanent else created + timedelta(days=duration_days)
+    conn = db_connect()
+    conn.execute("INSERT INTO licenses(license_key,duration_days,permanent,status,customer_name,created_at,expires_at) VALUES(?,?,?,?,?,?,?)",
+                 (key, duration_days, 1 if permanent else 0, "UNUSED", customer_name, iso(created), iso(expires)))
+    conn.commit(); conn.close()
+    return key, expires
+
+
+def activate_license(user_id, key):
+    key = key.strip().upper().replace(" ", "")
+    conn = db_connect(); lic = conn.execute("SELECT * FROM licenses WHERE license_key=?", (key,)).fetchone()
+    if not lic:
+        conn.close(); return False, "❌ License key not found."
+    if lic["status"] != "UNUSED":
+        conn.close(); return False, "❌ This license has already been used or is not available."
+    activated = now_utc(); expires = None if lic["permanent"] else activated + timedelta(days=lic["duration_days"] or 0)
+    conn.execute("UPDATE licenses SET status='ACTIVE',user_id=?,activated_at=?,expires_at=? WHERE license_key=?",
+                 (str(user_id), iso(activated), iso(expires), key))
+    conn.execute("UPDATE users SET status='LICENSE',license_key=? WHERE user_id=?", (key, str(user_id)))
+    conn.commit(); conn.close()
+    return True, "✅ License activated successfully."
+
+
+def admin_stats():
+    conn = db_connect()
+    total = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    trial = conn.execute("SELECT COUNT(*) FROM users WHERE status='TRIAL' AND trial_end > ?", (iso(now_utc()),)).fetchone()[0]
+    licensed = conn.execute("SELECT COUNT(*) FROM licenses WHERE status='ACTIVE'").fetchone()[0]
+    unused = conn.execute("SELECT COUNT(*) FROM licenses WHERE status='UNUSED'").fetchone()[0]
+    expired = conn.execute("SELECT COUNT(*) FROM users WHERE trial_end <= ? AND (license_key IS NULL OR license_key='')", (iso(now_utc()),)).fetchone()[0]
+    conn.close(); return total, trial, licensed, unused, expired
+
+
+def to_decimal(value):
     try:
-        cleaned = str(value).replace(",", "").replace("٬", "").replace("٫", ".").strip()
-        return Decimal(cleaned)
+        return Decimal(str(value).replace(",", "").replace("٬", "").replace("٫", ".").strip())
     except (InvalidOperation, ValueError):
         raise ValueError("Invalid number")
 
 
-def money(value: Decimal, decimals: int = 0) -> str:
-    return f"{value:,.{decimals}f}"
+def money(value, decimals=0): return f"{value:,.{decimals}f}"
 
 
 def calculate(data):
-    """Calculate export landed cost using GROSS WEIGHT as the basis."""
-    packages = to_decimal(data["packages"])
-    gross_per_package = to_decimal(data["gross_kg"])
-    product_price = to_decimal(data["product_price"])
-    pack_labor = to_decimal(data["pack_labor"])
-    profit = to_decimal(data["profit"])
-    land = to_decimal(data["land"])
-    clearance = to_decimal(data["clearance"])
-    sea_usd = to_decimal(data["sea_usd"])
-    sea_payment_method = data.get("sea_payment_method", "tehran")
-    tehran_tax_pct = to_decimal(data.get("tehran_tax_pct", "3"))
-    uae_aed_rate = to_decimal(data.get("uae_aed_rate", "3.685"))
-    switch_bill_usd = to_decimal(data.get("switch_bill_usd", "0"))
-    cross_stuffing_usd = to_decimal(data.get("cross_stuffing_usd", "0"))
-    fx = to_decimal(data["fx"])
-
-    if packages <= 0 or gross_per_package <= 0 or fx <= 0:
-        raise ValueError("Packages, gross weight and FX rate must be greater than zero")
-
-    total_gross = packages * gross_per_package
-    origin_price_kg = product_price + pack_labor + profit
-    product_total = total_gross * origin_price_kg
-
-    if sea_payment_method == "tehran":
-        sea_effective_usd = sea_usd * (Decimal("1") + tehran_tax_pct / Decimal("100"))
-    else:
-        # AED is only the payment currency. Converting USD freight to AED
-        # and back at the entered USD/AED rate leaves the USD-equivalent
-        # unchanged (unless there is a separate bank/payment spread).
-        sea_effective_usd = sea_usd
-
-    sea_aed_amount = sea_usd * uae_aed_rate if sea_payment_method == "uae" else Decimal("0")
-    extra_freight_usd = sea_effective_usd + switch_bill_usd + cross_stuffing_usd
-    freight_local = extra_freight_usd * fx
-    export_total = land + clearance + freight_local
-    total_cost = product_total + export_total
-
-    cost_local_kg = total_cost / total_gross
-    cost_usd_kg = cost_local_kg / fx
-
-    # Automatic customer price: round UP to the next $0.05.
-    step = Decimal("0.05")
-    customer_price = (cost_usd_kg / step).to_integral_value(rounding=ROUND_UP) * step
-
-    return {
-        "total_gross": total_gross,
-        "origin_price_kg": origin_price_kg,
-        "product_total": product_total,
-        "sea_payment_method": sea_payment_method,
-        "tehran_tax_pct": tehran_tax_pct,
-        "uae_aed_rate": uae_aed_rate,
-        "sea_effective_usd": sea_effective_usd,
-        "sea_aed_amount": sea_aed_amount,
-        "extra_freight_usd": extra_freight_usd,
-        "freight_local": freight_local,
-        "export_total": export_total,
-        "total_cost": total_cost,
-        "cost_local_kg": cost_local_kg,
-        "cost_usd_kg": cost_usd_kg,
-        "customer_price": customer_price,
-        "shipment_value": customer_price * total_gross,
-    }
+    packages=to_decimal(data["packages"]); gross=to_decimal(data["gross_kg"]); product=to_decimal(data["product_price"])
+    pack=to_decimal(data["pack_labor"]); profit=to_decimal(data["profit"]); land=to_decimal(data["land"]); clearance=to_decimal(data["clearance"])
+    sea=to_decimal(data["sea_usd"]); fx=to_decimal(data["fx"]); method=data.get("sea_payment_method","tehran")
+    tax=to_decimal(data.get("tehran_tax_pct","3")); aed=to_decimal(data.get("uae_aed_rate","3.685"))
+    switch=to_decimal(data.get("switch_bill_usd","0")); cross=to_decimal(data.get("cross_stuffing_usd","0"))
+    if packages<=0 or gross<=0 or fx<=0: raise ValueError("Packages, gross weight and FX must be positive")
+    total_gross=packages*gross; origin=product+pack+profit; product_total=total_gross*origin
+    effective_sea=sea*(Decimal("1")+tax/Decimal("100")) if method=="tehran" else sea
+    sea_aed=sea*aed if method=="uae" else Decimal("0")
+    freight_usd=effective_sea+switch+cross; total_cost=product_total+land+clearance+freight_usd*fx
+    cost_usd=(total_cost/total_gross)/fx; step=Decimal("0.05")
+    offer=(cost_usd/step).to_integral_value(rounding=ROUND_UP)*step
+    return {"total_gross":total_gross,"origin_price_kg":origin,"product_total":product_total,"sea_payment_method":method,"tehran_tax_pct":tax,"uae_aed_rate":aed,"sea_effective_usd":effective_sea,"sea_aed_amount":sea_aed,"extra_freight_usd":freight_usd,"total_cost":total_cost,"cost_usd_kg":cost_usd,"customer_price":offer,"shipment_value":offer*total_gross}
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    profile = get_profile(update.effective_user.id)
-
-    keyboard = [
+def main_keyboard(user_id):
+    rows=[
         [InlineKeyboardButton("🧮 محاسبه جدید | New Calculation", callback_data="new")],
         [InlineKeyboardButton("🏢 پروفایل شرکت | Company Profile", callback_data="profile")],
-        [InlineKeyboardButton("📞 ارتباط با سازنده | Contact Creator", callback_data="contact")],
-        [InlineKeyboardButton("ℹ️ راهنما | Help", callback_data="help")],
+        [InlineKeyboardButton("🔐 لایسنس | License", callback_data="license")],
+        [InlineKeyboardButton("📞 ارتباط | Contact", callback_data="contact"), InlineKeyboardButton("ℹ️ راهنما | Help", callback_data="help")],
     ]
+    if is_admin(user_id): rows.insert(0,[InlineKeyboardButton("👑 پنل مدیریت | Admin Panel", callback_data="admin")])
+    return InlineKeyboardMarkup(rows)
 
-    status = (
-        "✅ پروفایل شرکت شما آماده است."
-        if profile
-        else "⚠️ برای صدور Customer Quotation، ابتدا پروفایل شرکت را تنظیم کنید."
-    )
+
+async def start(update, context):
+    context.user_data.clear(); ensure_user(update.effective_user)
     await update.message.reply_text(
-        "🌿 T.T.A EXPORT CALCULATOR 🌿\n\n"
-        "به ربات محاسبه قیمت صادرات خوش آمدید.\n"
-        "Welcome to the Export Cost Calculator.\n\n"
-        "📦 محاسبه قیمت تمام‌شده صادرات\n"
-        "💱 محاسبه هزینه‌های ارزی\n"
-        "🚢 لحاظ کردن هزینه حمل دریایی\n"
-        "📄 تهیه Customer Quotation\n\n"
-        f"{status}\n\n"
-        "لطفاً یکی از گزینه‌های زیر را انتخاب کنید 👇",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+        "🌿 <b>T.T.A EXPORT CALCULATOR</b>\n"
+        f"Version {VERSION}\n\n"
+        f"{access_message(update.effective_user.id)}\n\n"
+        "محاسبه حرفه‌ای قیمت تمام‌شده صادرات و صدور Customer Quotation.",
+        parse_mode="HTML", reply_markup=main_keyboard(update.effective_user.id))
 
 
-def creator_contact_text():
-    lines = [
-        "📞 ارتباط با سازنده | Contact Creator",
-        "",
-        f"👤 {CREATOR_NAME}",
-    ]
-    if CREATOR_PHONE:
-        lines.append(f"📱 Phone: {CREATOR_PHONE}")
-    if CREATOR_WHATSAPP:
-        lines.append(f"💬 WhatsApp: {CREATOR_WHATSAPP}")
-    if CREATOR_TELEGRAM:
-        lines.append(f"✈️ Telegram: {CREATOR_TELEGRAM}")
-    if not (CREATOR_PHONE or CREATOR_WHATSAPP or CREATOR_TELEGRAM):
-        lines += [
-            "",
-            "اطلاعات تماس سازنده هنوز تنظیم نشده است.",
-            "Creator contact information has not been configured yet.",
-        ]
-    return "\n".join(lines)
+async def license_menu(update, context):
+    q=update.callback_query; await q.answer()
+    state, exp=access_state(q.from_user.id)
+    txt="🔐 <b>License Center</b>\n\n"
+    if state=="TRIAL": txt+=f"🎁 Free Trial فعال است.\nتا: {exp.astimezone().strftime('%Y/%m/%d %H:%M')}\n\n"
+    elif state=="LICENSE": txt+="🟢 License فعال است.\n"
+    elif state=="EXPIRED": txt+="🔴 دوره آزمایشی شما به پایان رسیده است.\n\n"
+    elif state=="ADMIN": txt+="👑 Administrator\n\n"
+    txt+="اگر لایسنس دریافت کرده‌اید، کد را وارد کنید."
+    await q.message.reply_text(txt,parse_mode="HTML",reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔑 ورود License Key",callback_data="enter_license")],
+        [InlineKeyboardButton("🏠 منوی اصلی",callback_data="home")]]))
 
 
-async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query:
-        await update.callback_query.answer()
-        message = update.callback_query.message
-    else:
-        message = update.message
-
-    keyboard = [[InlineKeyboardButton("🏠 منوی اصلی | Main Menu", callback_data="home")]]
-    await message.reply_text(
-        creator_contact_text(),
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+async def enter_license_prompt(update, context):
+    q=update.callback_query; await q.answer(); context.user_data["awaiting_license"]=True
+    await q.message.reply_text("🔑 License Key را ارسال کنید.\nمثال: TTA-ABCD-EFGH-IJKL")
 
 
-async def begin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query:
-        await update.callback_query.answer()
-        message = update.callback_query.message
-        user_id = update.effective_user.id
-    else:
-        message = update.message
-        user_id = update.effective_user.id
-
-    profile = get_profile(user_id)
-    if not profile:
-        await message.reply_text(
-            "🏢 قبل از محاسبه باید مشخصات شرکت خود را ثبت کنید.\n"
-            "Before calculating, please set your company profile.\n\n"
-            "از دکمه Company Profile یا دستور /profile استفاده کنید."
-        )
-        return ConversationHandler.END
-
-    context.user_data.clear()
-    await message.reply_text(
-        "نام محصول را وارد کنید.\n"
-        "Enter product name.\n\n"
-        "مثال | Example: خرما | Dates"
-    )
-    return PRODUCT
+async def handle_license_text(update, context):
+    if not context.user_data.get("awaiting_license"): return False
+    context.user_data.pop("awaiting_license",None)
+    ok,msg=activate_license(update.effective_user.id,update.message.text)
+    await update.message.reply_text(msg,reply_markup=main_keyboard(update.effective_user.id))
+    return True
 
 
-async def text_field(update, context, key, prompt, next_state):
-    value = update.message.text.strip()
-    if not value:
-        await update.message.reply_text("لطفاً مقدار را وارد کنید.\nPlease enter a value.")
-        return next_state - 1
-    context.user_data[key] = value
-    await update.message.reply_text(prompt)
-    return next_state
+async def creator_contact(update, context):
+    q=update.callback_query if update.callback_query else None
+    if q: await q.answer(); msg=q.message
+    else: msg=update.message
+    lines=["📞 <b>ارتباط با سازنده | Contact</b>","",f"👤 {CREATOR_NAME}"]
+    if CREATOR_PHONE: lines.append(f"📱 {CREATOR_PHONE}")
+    if CREATOR_WHATSAPP: lines.append(f"💬 WhatsApp: {CREATOR_WHATSAPP}")
+    if CREATOR_TELEGRAM: lines.append(f"✈️ Telegram: {CREATOR_TELEGRAM}")
+    await msg.reply_text("\n".join(lines),parse_mode="HTML",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی",callback_data="home")]]))
 
 
-async def numeric_field(update, context, key, prompt, current_state):
+async def help_command(update, context):
+    ensure_user(update.effective_user)
+    await update.message.reply_text("📘 راهنما | Help\n\nوزن مبنای محاسبه: Gross Weight\nقیمت مشتری خودکار و رو به بالا تا $0.05 گرد می‌شود.\n\nهر کاربر Trial هفت‌روزه دریافت می‌کند و پس از آن برای ادامه نیاز به License دارد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی",callback_data="home")]]))
+
+
+async def help_menu(update, context):
+    q=update.callback_query; await q.answer()
+    await q.message.reply_text("📘 <b>راهنما | Help</b>\n\nوزن مبنای محاسبه: Gross Weight\nقیمت مشتری خودکار و رو به بالا تا $0.05 گرد می‌شود.\n\nهر کاربر Trial هفت‌روزه دریافت می‌کند و پس از آن برای ادامه نیاز به License دارد.",parse_mode="HTML",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 منوی اصلی",callback_data="home")]]))
+
+
+async def license_command(update, context):
+    ensure_user(update.effective_user)
+    state, exp = access_state(update.effective_user.id)
+    txt = "🔐 License Center\n\n"
+    if state == "TRIAL": txt += f"🎁 Free Trial فعال است.\nتا: {exp.astimezone().strftime("%Y/%m/%d %H:%M")}\n\n"
+    elif state == "LICENSE": txt += "🟢 License فعال است.\n\n"
+    elif state == "EXPIRED": txt += "🔴 Trial شما تمام شده است.\n\n"
+    elif state == "ADMIN": txt += "👑 Administrator\n\n"
+    txt += "اگر لایسنس دریافت کرده‌اید، دکمه ورود License Key را بزنید."
+    await update.message.reply_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔑 ورود License Key", callback_data="enter_license")],[InlineKeyboardButton("🏠 منوی اصلی", callback_data="home")]]))
+
+
+async def admin_command(update, context):
+    ensure_user(update.effective_user)
+    await admin_panel(update, context)
+
+
+async def begin(update, context):
+    ensure_user(update.effective_user)
+    if not access_allowed(update.effective_user.id):
+        await update.message.reply_text("🔒 دسترسی شما به پایان رسیده است. از بخش License یک کد معتبر وارد کنید.",reply_markup=main_keyboard(update.effective_user.id)); return ConversationHandler.END
+    if not get_profile(update.effective_user.id):
+        await update.message.reply_text("🏢 ابتدا Company Profile را تکمیل کنید.",reply_markup=main_keyboard(update.effective_user.id)); return ConversationHandler.END
+    context.user_data.clear(); await update.message.reply_text("نام محصول را وارد کنید.\nEnter product name."); return PRODUCT
+
+
+async def text_field(update, context, key, prompt, state):
+    v=update.message.text.strip()
+    if not v: await update.message.reply_text("لطفاً مقدار را وارد کنید."); return state
+    context.user_data[key]=v; await update.message.reply_text(prompt); return state
+
+async def numeric_field(update, context, key, prompt, state):
     try:
-        value = to_decimal(update.message.text)
-        if value < 0:
-            raise ValueError("negative")
+        v=to_decimal(update.message.text)
+        if v<0: raise ValueError
     except ValueError:
-        await update.message.reply_text(
-            "❌ عدد نامعتبر است.\n"
-            "Please enter a valid non-negative number.\n\n"
-            "مثال | Example: 3500 or 7.15"
-        )
-        return current_state
+        await update.message.reply_text("❌ عدد نامعتبر است. لطفاً عدد معتبر وارد کنید."); return state
+    context.user_data[key]=update.message.text.strip(); await update.message.reply_text(prompt); return state+1
 
-    context.user_data[key] = update.message.text.strip()
-    await update.message.reply_text(prompt)
-    return current_state + 1
+async def product(update,c): return await text_field(update,c,"product","نوع بسته‌بندی را وارد کنید.\nEnter packaging type.",PACKAGING)
+async def packaging(update,c): return await text_field(update,c,"packaging","تعداد کل بسته را وارد کنید.",PACKAGES)
+async def packages(update,c): return await numeric_field(update,c,"packages","وزن ناخالص هر بسته را به KG وارد کنید.",PACKAGES)
+async def gross(update,c): return await numeric_field(update,c,"gross_kg","قیمت محصول به ازای هر KG، به تومان.",GROSS_KG)
+async def product_price(update,c): return await numeric_field(update,c,"product_price","هزینه بسته‌بندی و کارگر به ازای هر KG، به تومان.",PRODUCT_PRICE)
+async def pack_labor(update,c): return await numeric_field(update,c,"pack_labor","حاشیه سود محصول به ازای هر KG، به تومان.",PACK_LABOR)
+async def profit(update,c): return await numeric_field(update,c,"profit","حمل زمینی تا بندرعباس، به تومان.",PROFIT)
+async def land(update,c): return await numeric_field(update,c,"land","هزینه ترخیص، به تومان.",LAND)
+async def clearance(update,c): return await numeric_field(update,c,"clearance","حمل دریایی، به دلار.",CLEARANCE)
 
-
-async def product(update, context):
-    return await text_field(
-        update, context, "product",
-        "نوع بسته‌بندی را وارد کنید.\n"
-        "Enter packaging type.\n\n"
-        "مثال | Example: کارتن | Carton",
-        PACKAGING
-    )
-
-
-async def packaging(update, context):
-    return await text_field(
-        update, context, "packaging",
-        "تعداد کل بسته را وارد کنید.\n"
-        "Enter total number of packages.\n\n"
-        "مثال | Example: 3500",
-        PACKAGES
-    )
-
-
-async def packages(update, context):
-    return await numeric_field(
-        update, context, "packages",
-        "وزن ناخالص هر بسته را به کیلو وارد کنید.\n"
-        "Enter gross weight per package in KG.\n\n"
-        "مثال | Example: 7.15",
-        PACKAGES
-    )
-
-
-async def gross(update, context):
-    return await numeric_field(
-        update, context, "gross_kg",
-        "قیمت خود محصول به ازای هر کیلو، به تومان.\n"
-        "Product price per KG, in Toman.\n\n"
-        "مثال | Example: 133000",
-        GROSS_KG
-    )
-
-
-async def product_price(update, context):
-    return await numeric_field(
-        update, context, "product_price",
-        "هزینه بسته‌بندی و کارگر به ازای هر کیلو، به تومان.\n"
-        "Packaging & labor cost per KG, in Toman.\n\n"
-        "مثال | Example: 3000",
-        PRODUCT_PRICE
-    )
-
-
-async def pack_labor(update, context):
-    return await numeric_field(
-        update, context, "pack_labor",
-        "حاشیه سود شما روی محصول به ازای هر کیلو، به تومان.\n"
-        "Your product profit margin per KG, in Toman.\n\n"
-        "مثال | Example: 6000",
-        PACK_LABOR
-    )
-
-
-async def profit(update, context):
-    return await numeric_field(
-        update, context, "profit",
-        "کرایه حمل زمینی تا بندرعباس، به تومان.\n"
-        "Inland freight to Bandar Abbas, in Toman.\n\n"
-        "مثال | Example: 55000000",
-        PROFIT
-    )
-
-
-async def land(update, context):
-    return await numeric_field(
-        update, context, "land",
-        "هزینه ترخیص، به تومان.\n"
-        "Customs clearance cost, in Toman.\n\n"
-        "مثال | Example: 600000000",
-        LAND
-    )
-
-
-async def clearance(update, context):
-    return await numeric_field(
-        update, context, "clearance",
-        "کرایه حمل دریایی، به دلار.\n"
-        "Sea freight, in USD.\n\n"
-        "مثال | Example: 8200",
-        CLEARANCE
-    )
-
-
-async def sea(update, context):
-    return await numeric_field(
-        update, context, "sea_usd",
-        "روش پرداخت کرایه دریایی را انتخاب کنید.\n"
-        "Choose the sea freight payment method.\n\n"
-        "1️⃣ تهران — USD + 3% Tax\n"
-        "2️⃣ UAE — AED\n\n"
-        "عدد 1 یا 2 را ارسال کنید. | Send 1 or 2.",
-        SEA
-    )
-
-
-async def sea_payment(update, context):
-    value = update.message.text.strip().lower()
-    if value in {"1", "تهران", "tehran", "iran"}:
-        context.user_data["sea_payment_method"] = "tehran"
-        await update.message.reply_text(
-            "درصد مالیات/هزینه پرداخت کرایه در تهران را وارد کنید.\n"
-            "Enter Tehran freight tax/payment charge %.\n\n"
-            "مقدار پیش‌فرض: 3\n"
-            "Default: 3\n\n"
-            "مثال | Example: 3"
-        )
-        return TEHRAN_TAX
-    if value in {"2", "امارات", "uae", "dubai", "ابوظبی"}:
-        context.user_data["sea_payment_method"] = "uae"
-        await update.message.reply_text(
-            "نرخ تبدیل دلار به درهم را وارد کنید.\n"
-            "Enter USD/AED payment rate.\n\n"
-            "پیش‌فرض پیشنهادی: 3.685 AED/USD\n"
-            "Suggested default: 3.685 AED/USD\n\n"
-            "مثال | Example: 3.685"
-        )
-        return UAE_AED_RATE
-    await update.message.reply_text(
-        "❌ انتخاب نامعتبر است.\n"
-        "Please send 1 for Tehran or 2 for UAE."
-    )
-    return SEA_PAYMENT
-
-
-async def tehran_tax(update, context):
+async def sea(update,c):
+    return await numeric_field(update,c,"sea_usd","روش پرداخت را انتخاب کنید:\n1️⃣ تهران — USD + 3% Tax\n2️⃣ UAE — AED\nعدد 1 یا 2 را ارسال کنید.",SEA)
+async def sea_payment(update,c):
+    v=update.message.text.strip().lower()
+    if v in {"1","تهران","tehran","iran"}:
+        c.user_data["sea_payment_method"]="tehran"; await update.message.reply_text("درصد مالیات/هزینه تهران را وارد کنید.\nپیش‌فرض: 3"); return TEHRAN_TAX
+    if v in {"2","امارات","uae","dubai","ابوظبی"}:
+        c.user_data["sea_payment_method"]="uae"; await update.message.reply_text("نرخ USD/AED را وارد کنید.\nپیش‌فرض: 3.685"); return UAE_AED_RATE
+    await update.message.reply_text("❌ فقط 1 یا 2 را ارسال کنید."); return SEA_PAYMENT
+async def tehran_tax(update,c):
     try:
-        value = to_decimal(update.message.text)
-        if value < 0:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text(
-            "❌ درصد نامعتبر است. یک عدد صفر یا بیشتر وارد کنید.\n"
-            "Please enter a valid non-negative percentage."
-        )
-        return TEHRAN_TAX
-    context.user_data["tehran_tax_pct"] = update.message.text.strip()
-    await update.message.reply_text(
-        "هزینه Switch Bill of Lading را به دلار وارد کنید.\n"
-        "Enter Switch Bill of Lading cost in USD.\n\n"
-        "اگر نیاز نیست، 0 وارد کنید. | If not applicable, enter 0.\n"
-        "مثال | Example: 150"
-    )
-    return SWITCH_BILL
-
-
-async def uae_aed_rate(update, context):
+        if to_decimal(update.message.text)<0: raise ValueError
+    except ValueError: await update.message.reply_text("❌ درصد نامعتبر است."); return TEHRAN_TAX
+    c.user_data["tehran_tax_pct"]=update.message.text.strip(); await update.message.reply_text("هزینه Switch Bill به USD را وارد کنید؛ اگر نیست 0."); return SWITCH_BILL
+async def uae_aed_rate(update,c):
     try:
-        value = to_decimal(update.message.text)
-        if value <= 0:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text(
-            "❌ نرخ نامعتبر است.\n"
-            "Please enter a valid USD/AED rate greater than zero.\n\n"
-            "مثال | Example: 3.685"
-        )
-        return UAE_AED_RATE
-    context.user_data["uae_aed_rate"] = update.message.text.strip()
+        if to_decimal(update.message.text)<=0: raise ValueError
+    except ValueError: await update.message.reply_text("❌ نرخ نامعتبر است."); return UAE_AED_RATE
+    c.user_data["uae_aed_rate"]=update.message.text.strip(); await update.message.reply_text("هزینه Switch Bill به USD را وارد کنید؛ اگر نیست 0."); return SWITCH_BILL
+async def switch_bill(update,c): return await numeric_field(update,c,"switch_bill_usd","هزینه Cross Stuffing به USD را وارد کنید؛ اگر نیست 0.",SWITCH_BILL)
+async def cross_stuffing(update,c): return await numeric_field(update,c,"cross_stuffing_usd","نرخ دلار به تومان را وارد کنید.",CROSS_STUFFING)
+async def fx(update,c): return await numeric_field(update,c,"fx","مقصد را وارد کنید.",FX)
+async def destination(update,c): c.user_data["destination"]=update.message.text.strip(); await update.message.reply_text("نام مشتری را وارد کنید."); return CUSTOMER
+
+async def customer_name(update,c):
+    c.user_data["customer_name"]=update.message.text.strip(); data=c.user_data.copy()
+    try: r=calculate(data)
+    except Exception:
+        log.exception("Calculation failed"); await update.message.reply_text("❌ محاسبه انجام نشد. اطلاعات را بررسی کنید."); return ConversationHandler.END
+    c.user_data["last_result"]=r
+    label="Tehran — USD + Tax" if r["sea_payment_method"]=="tehran" else "UAE — AED"
+    detail=f"Tehran tax: {money(r['tehran_tax_pct'],2)}%" if r["sea_payment_method"]=="tehran" else f"USD/AED: {money(r['uae_aed_rate'],3)} | Payment: {money(r['sea_aed_amount'],2)} AED"
     await update.message.reply_text(
-        "هزینه Switch Bill of Lading را به دلار وارد کنید.\n"
-        "Enter Switch Bill of Lading cost in USD.\n\n"
-        "اگر نیاز نیست، 0 وارد کنید. | If not applicable, enter 0.\n"
-        "مثال | Example: 150"
-    )
-    return SWITCH_BILL
-
-
-async def switch_bill(update, context):
-    return await numeric_field(
-        update, context, "switch_bill_usd",
-        "هزینه Cross Stuffing را به دلار وارد کنید.\n"
-        "Enter Cross Stuffing cost in USD.\n\n"
-        "اگر نیاز نیست، 0 وارد کنید. | If not applicable, enter 0.\n"
-        "مثال | Example: 300",
-        SWITCH_BILL
-    )
-
-
-async def cross_stuffing(update, context):
-    return await numeric_field(
-        update, context, "cross_stuffing_usd",
-        "نرخ دلار به تومان.\n"
-        "USD exchange rate in Toman.\n\n"
-        "مثال | Example: 187000",
-        CROSS_STUFFING
-    )
-
-
-async def fx(update, context):
-    return await numeric_field(
-        update, context, "fx",
-        "مقصد را وارد کنید.\n"
-        "Enter destination.\n\n"
-        "مثال | Example: ناواشیوا، هند | Nhava Sheva, India",
-        FX
-    )
-
-
-async def destination(update, context):
-    context.user_data["destination"] = update.message.text.strip()
-    await update.message.reply_text(
-        "نام مشتری را وارد کنید.\n"
-        "Enter customer name.\n\n"
-        "Example: ABC Trading LLC"
-    )
-    return CUSTOMER
-
-
-async def customer_name(update, context):
-    context.user_data["customer_name"] = update.message.text.strip()
-
-    data = context.user_data.copy()
-    try:
-        result = calculate(data)
-    except Exception as exc:
-        log.exception("Calculation error: %s", exc)
-        await update.message.reply_text(
-            "❌ محاسبه انجام نشد. لطفاً اطلاعات را بررسی کنید.\n"
-            "Calculation failed. Please check the entered values."
-        )
-        return ConversationHandler.END
-
-    context.user_data["last_result"] = result
-
-    payment_label = "Tehran — USD + Tax" if result.get("sea_payment_method") == "tehran" else "UAE — AED"
-    payment_detail = (
-        f"Tehran tax: {money(result['tehran_tax_pct'], 2)}% | Effective sea freight: {money(result['sea_effective_usd'], 2)} USD"
-        if result.get("sea_payment_method") == "tehran"
-        else f"USD/AED: {money(result['uae_aed_rate'], 3)} | Sea freight payment: {money(result['sea_aed_amount'], 2)} AED"
-    )
-    text = (
-        "🔐 محاسبه داخلی انجام شد | Internal calculation completed\n\n"
-        f"Sea Freight Payment: {payment_label}\n"
-        f"{payment_detail}\n\n"
-        f"هزینه تمام‌شده | Landed Cost: {money(result['cost_usd_kg'], 3)} USD/KG\n"
-        f"قیمت نهایی مشتری | Final Customer Price: {money(result['customer_price'], 2)} USD/KG\n\n"
-        "قیمت‌های خرید، بسته‌بندی، سود و هزینه‌های داخلی در خروجی مشتری نمایش داده نمی‌شوند."
-    )
-
-    keyboard = [
-        [InlineKeyboardButton("📄 خروجی مشتری | Customer Quotation", callback_data="customer_offer")],
-        [InlineKeyboardButton("🧮 محاسبه جدید | New Calculation", callback_data="new")],
-        [InlineKeyboardButton("📋 نمایش فرمول | Show Formula", callback_data="formula")],
-    ]
-
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        f"🔐 <b>Internal Calculation</b>\n\nSea Freight: {label}\n{detail}\n\n"
+        f"Landed Cost: {money(r['cost_usd_kg'],3)} USD/KG\nFinal Customer Price: <b>{money(r['customer_price'],2)} USD/KG</b>",
+        parse_mode="HTML",reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📄 Customer Quotation",callback_data="customer_offer")],
+            [InlineKeyboardButton("🧮 New Calculation",callback_data="new")],
+            [InlineKeyboardButton("📋 Formula",callback_data="formula")]]))
     return ConversationHandler.END
 
 
-async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query:
-        await update.callback_query.answer()
-        message = update.callback_query.message
-    else:
-        message = update.message
-
-    context.user_data.clear()
-    await message.reply_text(
-        "🏢 Company Profile | مشخصات شرکت\n\n"
-        "نام شرکت را وارد کنید.\n"
-        "Enter your company name.\n\n"
-        "Example: ABC Trading Company"
-    )
-    return PROFILE_COMPANY
-
-
-async def profile_company(update, context):
-    value = update.message.text.strip()
-    if not value:
-        await update.message.reply_text("لطفاً نام شرکت را وارد کنید.")
-        return PROFILE_COMPANY
-    context.user_data["profile_company"] = value
-    await update.message.reply_text(
-        "آدرس شرکت را به انگلیسی وارد کنید.\n"
-        "Enter your company address in English.\n\n"
-        "Example: Bandar Abbas, Iran"
-    )
-    return PROFILE_ADDRESS
+async def profile_start(update,c):
+    ensure_user(update.effective_user)
+    q=update.callback_query
+    if q: await q.answer(); msg=q.message
+    else: msg=update.message
+    c.user_data.clear(); await msg.reply_text("🏢 نام شرکت را وارد کنید.\nEnter company name."); return PROFILE_COMPANY
+async def profile_company(update,c): c.user_data["profile_company"]=update.message.text.strip(); await update.message.reply_text("آدرس شرکت را به انگلیسی وارد کنید."); return PROFILE_ADDRESS
+async def profile_address(update,c): c.user_data["profile_address"]=update.message.text.strip(); await update.message.reply_text("شماره تماس شرکت را وارد کنید."); return PROFILE_PHONE
+async def profile_phone(update,c): c.user_data["profile_phone"]=update.message.text.strip(); await update.message.reply_text("لوگوی شرکت را ارسال کنید یا SKIP بزنید."); return PROFILE_LOGO
+async def profile_logo(update,c):
+    logo=update.message.photo[-1].file_id if update.message.photo else None
+    if not logo and (not update.message.text or update.message.text.strip().lower() not in {"skip","no","ندارم","خیر"}):
+        await update.message.reply_text("لطفاً عکس لوگو یا SKIP ارسال کنید."); return PROFILE_LOGO
+    save_profile(update.effective_user.id,c.user_data["profile_company"],c.user_data["profile_address"],c.user_data["profile_phone"],logo); c.user_data.clear()
+    await update.message.reply_text("✅ Company Profile saved.",reply_markup=main_keyboard(update.effective_user.id)); return ConversationHandler.END
 
 
-async def profile_address(update, context):
-    value = update.message.text.strip()
-    if not value:
-        await update.message.reply_text("لطفاً آدرس شرکت را وارد کنید.")
-        return PROFILE_ADDRESS
-    context.user_data["profile_address"] = value
-    await update.message.reply_text(
-        "شماره تماس شرکت را وارد کنید.\n"
-        "Enter company phone / WhatsApp number.\n\n"
-        "Example: +98 939 625 5418"
-    )
-    return PROFILE_PHONE
-
-
-async def profile_phone(update, context):
-    value = update.message.text.strip()
-    if not value:
-        await update.message.reply_text("لطفاً شماره تماس را وارد کنید.")
-        return PROFILE_PHONE
-    context.user_data["profile_phone"] = value
-    await update.message.reply_text(
-        "لوگوی شرکت را به‌صورت عکس ارسال کنید.\n"
-        "Send your company logo as an image.\n\n"
-        "اگر لوگو ندارید یا نمی‌خواهید نمایش داده شود، کلمه SKIP را بفرستید."
-    )
-    return PROFILE_LOGO
-
-
-async def profile_logo(update, context):
-    logo_file_id = None
-    if update.message.photo:
-        logo_file_id = update.message.photo[-1].file_id
-    elif update.message.text and update.message.text.strip().lower() in {"skip", "no", "ندارم", "خیر"}:
-        logo_file_id = None
-    else:
-        await update.message.reply_text(
-            "لطفاً لوگو را به‌صورت عکس ارسال کنید یا SKIP را بفرستید.\n"
-            "Send an image or type SKIP."
-        )
-        return PROFILE_LOGO
-
-    save_profile(
-        update.effective_user.id,
-        context.user_data["profile_company"],
-        context.user_data["profile_address"],
-        context.user_data["profile_phone"],
-        logo_file_id,
-    )
-    context.user_data.clear()
-
-    await update.message.reply_text(
-        "✅ Company Profile saved successfully.\n"
-        "پروفایل شرکت با موفقیت ذخیره شد.\n\n"
-        "از این پس Customer Quotation با مشخصات شرکت خودتان صادر می‌شود."
-    )
-    return ConversationHandler.END
-
-
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == "profile":
-        # Profile conversation entry point handles this callback.
-        return PROFILE_COMPANY
-
-    if query.data == "new":
-        profile = get_profile(update.effective_user.id)
-        if not profile:
-            await query.message.reply_text(
-                "ابتدا Company Profile را تنظیم کنید.\n"
-                "Please set your Company Profile first."
-            )
-            return ConversationHandler.END
-        context.user_data.clear()
-        await query.message.reply_text(
-            "نام محصول را وارد کنید.\n"
-            "Enter product name.\n\n"
-            "مثال | Example: خرما | Dates"
-        )
-        return PRODUCT
-
-    if query.data == "home":
-        profile = get_profile(update.effective_user.id)
-        keyboard = [
-            [InlineKeyboardButton("🧮 محاسبه جدید | New Calculation", callback_data="new")],
-            [InlineKeyboardButton("🏢 پروفایل شرکت | Company Profile", callback_data="profile")],
-            [InlineKeyboardButton("📞 ارتباط با سازنده | Contact Creator", callback_data="contact")],
-            [InlineKeyboardButton("ℹ️ راهنما | Help", callback_data="help")],
-        ]
-        status = "✅ پروفایل شرکت شما آماده است." if profile else "⚠️ ابتدا پروفایل شرکت را تنظیم کنید."
-        await query.message.reply_text(
-            "🌿 T.T.A EXPORT CALCULATOR 🌿\n\n"
-            "به منوی اصلی خوش آمدید.\n"
-            "Welcome to the main menu.\n\n"
-            f"{status}",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
-        return ConversationHandler.END
-
-    if query.data == "contact":
-        await query.message.reply_text(
-            creator_contact_text(),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🏠 منوی اصلی | Main Menu", callback_data="home")]
-            ]),
-        )
-        return ConversationHandler.END
-
-    if query.data == "help":
-        await query.message.reply_text(
-            "📘 راهنما | Help\n\n"
-            "این ربات برای محاسبه قیمت تمام‌شده صادرات طراحی شده است.\n"
-            "This bot calculates export landed cost.\n\n"
-            "مبنای وزن: ناخالص | Weight basis: Gross\n"
-            "واحد قیمت داخلی: تومان | Local currency: Toman\n"
-            "حمل دریایی، Switch Bill و Cross Stuffing: دلار | USD\n"
-            "پرداخت حمل دریایی: تهران (USD + Tax) یا UAE (AED)\n\n"
-            "قیمت پیشنهادی مشتری به‌صورت خودکار محاسبه می‌شود.\n"
-            "Customer price is calculated automatically.\n\n"
-            "هر کاربر می‌تواند مشخصات شرکت و لوگوی خودش را ثبت کند."
-        )
-        return ConversationHandler.END
-
-    if query.data == "customer_offer":
-        data = context.user_data
-        result = context.user_data.get("last_result")
-        profile = get_profile(update.effective_user.id)
-
-        if not data.get("product") or not result or not profile:
-            await query.message.reply_text(
-                "ابتدا پروفایل و محاسبه را کامل کنید.\n"
-                "Please complete your profile and calculation first."
-            )
-            return ConversationHandler.END
-
-        customer_text = (
-            "📄 EXPORT QUOTATION\n\n"
-            f"Customer: {data.get('customer_name', '-')}\n"
-            f"Product: {data['product']}\n"
-            f"Packaging: {data['packaging']}\n"
-            f"Packages: {money(to_decimal(data['packages']), 0)}\n"
-            f"Gross Weight: {money(result['total_gross'], 2)} KG\n"
-            f"Destination: {data['destination']}\n\n"
-            f"FINAL OFFER PRICE: {money(result['customer_price'], 2)} USD/KG\n"
-            f"TOTAL SHIPMENT VALUE: {money(result['shipment_value'], 2)} USD\n\n"
-            f"{profile['company_name']}\n"
-            f"{profile['address']}\n"
-            f"Mobile: {profile['phone']}"
-        )
-        await query.message.reply_text(customer_text)
-
-        logo_path = None
-        if profile.get("logo_file_id"):
-            try:
-                tg_file = await context.bot.get_file(profile["logo_file_id"])
-                logo_path = f"/tmp/tta_logo_{query.from_user.id}.png"
-                await tg_file.download_to_drive(logo_path)
-            except Exception:
-                log.exception("Could not download company logo")
-                logo_path = None
-
-        pdf_path = f"/tmp/TTA_Customer_Quotation_{query.from_user.id}.pdf"
-        create_customer_pdf(data, result, profile, pdf_path, logo_path)
-        with open(pdf_path, "rb") as f:
-            await query.message.reply_document(
-                f,
-                filename="Export_Quotation.pdf",
-                caption="📄 Customer Quotation"
-            )
-
-        for path in (pdf_path, logo_path):
-            if path:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-        return ConversationHandler.END
-
-    if query.data == "formula":
-        await query.message.reply_text(
-            "🧮 فرمول | Formula\n\n"
-            "قیمت مبدأ / Origin Price =\n"
-            "Product Price + Packaging & Labor + Product Profit\n\n"
-            "وزن ناخالص کل / Total Gross Weight =\n"
-            "Packages × Gross Weight per Package\n\n"
-            "Sea Freight Effective USD =\n"
-            "Tehran: Sea Freight × (1 + Tax%)\n"
-            "UAE: Sea Freight (AED is payment currency only)\n\n"
-            "Export Freight USD =\n"
-            "Effective Sea Freight + Switch Bill + Cross Stuffing\n\n"
-            "Landed Cost USD/KG =\n"
-            "(Product Cost + Inland Freight + Customs + Export Freight×FX)\n"
-            "÷ Total Gross Weight ÷ FX\n\n"
-            "Customer Price = Landed Cost rounded UP to $0.05"
-        )
-        return ConversationHandler.END
-
-    return ConversationHandler.END
-
-
-def create_customer_pdf(data, result, profile, path, logo_path=None):
-    """Customer-facing quotation. English only; internal costs are excluded."""
-    styles = getSampleStyleSheet()
-    title = ParagraphStyle(
-        "TTATitle", parent=styles["Title"], fontSize=18, leading=21,
-        alignment=1, textColor=colors.white
-    )
-    subtitle = ParagraphStyle(
-        "TTASubtitle", parent=styles["BodyText"], fontSize=9.5, leading=12,
-        alignment=1
-    )
-    body = ParagraphStyle(
-        "TTABody", parent=styles["BodyText"], fontSize=9.5, leading=13
-    )
-    small = ParagraphStyle(
-        "TTASmall", parent=styles["BodyText"], fontSize=8.5, leading=11
-    )
-    big = ParagraphStyle(
-        "TTABig", parent=styles["Title"], fontSize=27, leading=32,
-        alignment=1
-    )
-
-    doc = SimpleDocTemplate(
-        path, pagesize=A4, rightMargin=36, leftMargin=36,
-        topMargin=30, bottomMargin=30
-    )
-    story = []
-
-    header_cells = []
+def create_customer_pdf(data,r,profile,path,logo_path=None):
+    styles=getSampleStyleSheet(); title=ParagraphStyle("title",parent=styles["Title"],fontSize=18,leading=21,alignment=1,textColor=colors.white); body=ParagraphStyle("body",parent=styles["BodyText"],fontSize=9.5,leading=13,alignment=1); big=ParagraphStyle("big",parent=styles["Title"],fontSize=27,leading=32,alignment=1); small=ParagraphStyle("small",parent=styles["BodyText"],fontSize=8.5,leading=11)
+    doc=SimpleDocTemplate(path,pagesize=A4,rightMargin=36,leftMargin=36,topMargin=30,bottomMargin=30); story=[]
+    cells=[]
     if logo_path and os.path.exists(logo_path):
         from reportlab.platypus import Image as RLImage
-        logo = RLImage(logo_path, width=62, height=62, kind="proportional")
-        header_cells.append(logo)
-    header_cells.append(Paragraph("<b>EXPORT QUOTATION</b>", title))
-    col_widths = [78, 442] if len(header_cells) == 2 else [520]
-    header = Table([header_cells], colWidths=col_widths)
-    header.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#17365D")),
-        ("ALIGN", (0,0), (-1,-1), "CENTER"),
-        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-        ("TOPPADDING", (0,0), (-1,-1), 9),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 9),
-    ]))
-    story += [header, Spacer(1, 8)]
-
-    company = Table([[
-        Paragraph(
-            f"<b>{profile['company_name']}</b><br/>"
-            f"{profile['address']}<br/>"
-            f"Mobile: {profile['phone']}",
-            subtitle
-        )
-    ]], colWidths=[520])
-    company.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#D9EAF7")),
-        ("ALIGN", (0,0), (-1,-1), "CENTER"),
-        ("TOPPADDING", (0,0), (-1,-1), 7),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 7),
-    ]))
-    story += [company, Spacer(1, 15)]
-
-    rows = [
-        ["Quotation No.", datetime.now().strftime("TTA-%Y%m%d-%H%M")],
-        ["Date", datetime.now().strftime("%Y/%m/%d")],
-        ["Customer", data.get("customer_name", "-")],
-        ["Product", data["product"]],
-        ["Packaging", data["packaging"]],
-        ["Packages", money(to_decimal(data["packages"]), 0)],
-        ["Gross Weight", f"{money(result['total_gross'], 2)} KG"],
-        ["Destination", data["destination"]],
-    ]
-    table = Table(rows, colWidths=[170, 350])
-    table.setStyle(TableStyle([
-        ("GRID", (0,0), (-1,-1), .5, colors.HexColor("#B7B7B7")),
-        ("BACKGROUND", (0,0), (0,-1), colors.HexColor("#D9EAF7")),
-        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-        ("FONTSIZE", (0,0), (-1,-1), 9.5),
-        ("TOPPADDING", (0,0), (-1,-1), 8),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
-    ]))
-    story += [table, Spacer(1, 20)]
-
-    offer = Table([
-        [Paragraph("FINAL OFFER PRICE", body)],
-        [Paragraph(f"{money(result['customer_price'], 2)} USD / KG", big)],
-        [Paragraph(
-            f"TOTAL SHIPMENT VALUE: {money(result['shipment_value'], 2)} USD",
-            body
-        )],
-    ], colWidths=[520])
-    offer.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#E2F0D9")),
-        ("BOX", (0,0), (-1,-1), .8, colors.HexColor("#70AD47")),
-        ("ALIGN", (0,0), (-1,-1), "CENTER"),
-        ("TOPPADDING", (0,0), (-1,-1), 10),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 10),
-    ]))
-    story += [offer, Spacer(1, 18)]
-
-    story.append(Paragraph(
-        "This quotation contains the final commercial offer only. "
-        "Internal purchase costs, operating costs, profit margin and logistics breakdown are excluded.",
-        small
-    ))
-    doc.build(story)
+        cells.append(RLImage(logo_path,width=62,height=62,kind="proportional"))
+    cells.append(Paragraph("<b>EXPORT QUOTATION</b>",title)); widths=[78,442] if len(cells)==2 else [520]
+    h=Table([cells],colWidths=widths); h.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#17365D")),("ALIGN",(0,0),(-1,-1),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),9),("BOTTOMPADDING",(0,0),(-1,-1),9)])); story += [h,Spacer(1,8)]
+    company=Table([[Paragraph(f"<b>{profile['company_name']}</b><br/>{profile['address']}<br/>Mobile: {profile['phone']}",body)]],colWidths=[520]); company.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#D9EAF7")),("ALIGN",(0,0),(-1,-1),"CENTER"),("TOPPADDING",(0,0),(-1,-1),7),("BOTTOMPADDING",(0,0),(-1,-1),7)])); story += [company,Spacer(1,15)]
+    rows=[["Quotation No.",datetime.now().strftime("TTA-%Y%m%d-%H%M")],["Date",datetime.now().strftime("%Y/%m/%d")],["Customer",data.get("customer_name","-")],["Product",data["product"]],["Packaging",data["packaging"]],["Packages",money(to_decimal(data["packages"]),0)],["Gross Weight",f"{money(r['total_gross'],2)} KG"],["Destination",data["destination"]]]
+    t=Table(rows,colWidths=[170,350]); t.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.5,colors.HexColor("#B7B7B7")),("BACKGROUND",(0,0),(0,-1),colors.HexColor("#D9EAF7")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("FONTSIZE",(0,0),(-1,-1),9.5),("TOPPADDING",(0,0),(-1,-1),8),("BOTTOMPADDING",(0,0),(-1,-1),8)])); story += [t,Spacer(1,20)]
+    offer=Table([[Paragraph("FINAL OFFER PRICE",body)],[Paragraph(f"{money(r['customer_price'],2)} USD / KG",big)],[Paragraph(f"TOTAL SHIPMENT VALUE: {money(r['shipment_value'],2)} USD",body)]],colWidths=[520]); offer.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#E2F0D9")),("BOX",(0,0),(-1,-1),.8,colors.HexColor("#70AD47")),("ALIGN",(0,0),(-1,-1),"CENTER"),("TOPPADDING",(0,0),(-1,-1),10),("BOTTOMPADDING",(0,0),(-1,-1),10)])); story += [offer,Spacer(1,18),Paragraph("This quotation contains the final commercial offer only. Internal costs and logistics breakdown are excluded.",small)]; doc.build(story)
 
 
-async def cancel(update, context):
-    context.user_data.clear()
-    await update.message.reply_text(
-        "محاسبه لغو شد.\nCalculation cancelled.\n\n"
-        "برای شروع دوباره /new را بزنید."
-    )
-    return ConversationHandler.END
+async def callback(update,c):
+    q=update.callback_query; await q.answer(); d=q.data
+    if d=="home": await q.message.reply_text("🌿 <b>T.T.A EXPORT CALCULATOR</b>\n\n"+access_message(q.from_user.id),parse_mode="HTML",reply_markup=main_keyboard(q.from_user.id)); return
+    if d=="license": await license_menu(update,c); return
+    if d=="enter_license": await enter_license_prompt(update,c); return
+    if d=="contact": await creator_contact(update,c); return
+    if d=="help": await help_menu(update,c); return
+    if d=="admin": await admin_panel(update,c); return
+    if d=="new":
+        if not access_allowed(q.from_user.id): await q.message.reply_text("🔒 Trial شما تمام شده است. از License Center استفاده کنید.",reply_markup=main_keyboard(q.from_user.id)); return
+        if not get_profile(q.from_user.id): await q.message.reply_text("🏢 ابتدا Company Profile را تکمیل کنید.",reply_markup=main_keyboard(q.from_user.id)); return
+        c.user_data.clear(); await q.message.reply_text("نام محصول را وارد کنید."); return
+    if d=="profile": await q.message.reply_text("از دستور /profile استفاده کنید تا پروفایل شرکت را ثبت کنید."); return
+    if d=="formula": await q.message.reply_text("🧮 Origin = Product + Packaging/Labor + Profit\nGross Weight = Packages × Gross/Package\nCustomer Price = Landed Cost rounded UP to $0.05"); return
+    if d=="customer_offer":
+        data=c.user_data; r=data.get("last_result"); p=get_profile(q.from_user.id)
+        if not r or not p: await q.message.reply_text("ابتدا محاسبه و پروفایل را کامل کنید."); return
+        text=(f"📄 <b>EXPORT QUOTATION</b>\n\nCustomer: {data.get('customer_name','-')}\nProduct: {data['product']}\nPackaging: {data['packaging']}\nPackages: {money(to_decimal(data['packages']),0)}\nGross Weight: {money(r['total_gross'],2)} KG\nDestination: {data['destination']}\n\n<b>FINAL OFFER PRICE: {money(r['customer_price'],2)} USD/KG</b>\nTOTAL SHIPMENT VALUE: {money(r['shipment_value'],2)} USD\n\n{p['company_name']}\n{p['address']}\nMobile: {p['phone']}")
+        await q.message.reply_text(text,parse_mode="HTML")
+        logo_path=None
+        if p.get("logo_file_id"):
+            try:
+                f=await c.bot.get_file(p["logo_file_id"]); logo_path=f"/tmp/tta_logo_{q.from_user.id}.png"; await f.download_to_drive(logo_path)
+            except Exception: log.exception("Logo download failed")
+        pdf=f"/tmp/TTA_Customer_Quotation_{q.from_user.id}.pdf"; create_customer_pdf(data,r,p,pdf,logo_path)
+        with open(pdf,"rb") as fh: await q.message.reply_document(fh,filename="Export_Quotation.pdf",caption="📄 Customer Quotation")
+        for path in (pdf,logo_path):
+            if path:
+                try: os.remove(path)
+                except OSError: pass
 
 
-async def post_init(application: Application):
-    # Keep Telegram's command menu synchronized even if BotFather commands
-    # have not been entered manually.
-    commands = [
-        BotCommand("start", "شروع / Main menu"),
-        BotCommand("new", "محاسبه جدید / New calculation"),
-        BotCommand("profile", "پروفایل شرکت / Company profile"),
-        BotCommand("contact", "ارتباط با سازنده / Contact creator"),
-        BotCommand("help", "راهنما / Help"),
-        BotCommand("cancel", "لغو عملیات / Cancel"),
-    ]
-    await application.bot.set_my_commands(commands)
+async def admin_panel(update,c):
+    q=update.callback_query
+    if q: await q.answer(); msg=q.message; uid=q.from_user.id
+    else: msg=update.message; uid=update.effective_user.id
+    if not is_admin(uid): await msg.reply_text("⛔ Access denied."); return
+    total,trial,licensed,unused,expired=admin_stats()
+    await msg.reply_text(
+        f"👑 <b>T.T.A ADMIN PANEL</b>\n\n📊 Users: {total}\n🎁 Active Trials: {trial}\n🟢 Active Licenses: {licensed}\n🔑 Unused Licenses: {unused}\n🔴 Expired Trials: {expired}",
+        parse_mode="HTML",reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ ساخت لایسنس 30 روزه",callback_data="lic30"),InlineKeyboardButton("➕ 90 روزه",callback_data="lic90")],
+            [InlineKeyboardButton("➕ 1 ساله",callback_data="lic365"),InlineKeyboardButton("♾ دائمی",callback_data="licperm")],
+            [InlineKeyboardButton("📋 لایسنس‌های فعال",callback_data="liclist")],
+            [InlineKeyboardButton("👥 کاربران",callback_data="userlist")],
+            [InlineKeyboardButton("🏠 منوی اصلی",callback_data="home")],
+        ]))
+
+
+async def admin_action(update,c):
+    q=update.callback_query; await q.answer(); uid=q.from_user.id
+    if not is_admin(uid): await q.message.reply_text("⛔ Access denied."); return
+    d=q.data
+    if d in {"lic30","lic90","lic365","licperm"}:
+        days={"lic30":30,"lic90":90,"lic365":365}.get(d); key,exp=create_license(days, d=="licperm")
+        validity="Permanent" if d=="licperm" else f"{days} days"
+        await q.message.reply_text(f"✅ <b>License Created</b>\n\n🔑 <code>{key}</code>\n⏳ Validity: {validity}\n🟡 Status: UNUSED\n\nاین کد را برای مشتری ارسال کنید.",parse_mode="HTML",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👑 Admin Panel",callback_data="admin")]])); return
+    if d=="liclist":
+        conn=db_connect(); rows=conn.execute("SELECT license_key,status,customer_name,expires_at FROM licenses ORDER BY created_at DESC LIMIT 20").fetchall(); conn.close()
+        if not rows: txt="📋 هنوز لایسنسی ساخته نشده است."
+        else:
+            txt="📋 <b>Latest Licenses</b>\n\n"+"\n".join(f"<code>{r['license_key']}</code> — {r['status']} — {r['expires_at'] or 'PERMANENT'}" for r in rows)
+        await q.message.reply_text(txt,parse_mode="HTML",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👑 Admin Panel",callback_data="admin")]])); return
+    if d=="userlist":
+        conn=db_connect(); rows=conn.execute("SELECT user_id,username,status,trial_end,license_key FROM users ORDER BY last_seen DESC LIMIT 20").fetchall(); conn.close()
+        txt="👥 <b>Recent Users</b>\n\n"+"\n".join(f"{r['user_id']} | @{r['username'] or '-'} | {r['status']} | {r['license_key'] or '-'}" for r in rows) if rows else "👥 No users yet."
+        await q.message.reply_text(txt,parse_mode="HTML",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👑 Admin Panel",callback_data="admin")]])); return
+
+
+async def cancel(update,c): c.user_data.clear(); await update.message.reply_text("لغو شد."); return ConversationHandler.END
+
+
+async def route_text(update,c):
+    if await handle_license_text(update,c): return
+
+
+async def myid(update, context):
+    ensure_user(update.effective_user)
+    await update.message.reply_text(f"🆔 Telegram User ID: {update.effective_user.id}")
+
+
+async def post_init(app):
+    await app.bot.set_my_commands([
+        BotCommand("start","شروع / Main menu"),BotCommand("new","محاسبه جدید"),BotCommand("profile","پروفایل شرکت"),
+        BotCommand("license","مدیریت لایسنس"),BotCommand("admin","پنل مدیریت"),BotCommand("contact","ارتباط"),BotCommand("help","راهنما"),BotCommand("cancel","لغو")])
 
 
 def main():
-    if not TOKEN:
-        raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN is missing. "
-            "Set it in Railway Variables or your hosting environment."
-        )
+    if not TOKEN: raise RuntimeError("TELEGRAM_BOT_TOKEN is missing")
+    db_connect().close()
+    app=Application.builder().token(TOKEN).post_init(post_init).build()
+    profile_conv=ConversationHandler(entry_points=[CommandHandler("profile",profile_start),CallbackQueryHandler(profile_start,pattern="^profile$")],states={PROFILE_COMPANY:[MessageHandler(filters.TEXT & ~filters.COMMAND,profile_company)],PROFILE_ADDRESS:[MessageHandler(filters.TEXT & ~filters.COMMAND,profile_address)],PROFILE_PHONE:[MessageHandler(filters.TEXT & ~filters.COMMAND,profile_phone)],PROFILE_LOGO:[MessageHandler(filters.PHOTO,profile_logo),MessageHandler(filters.TEXT & ~filters.COMMAND,profile_logo)]},fallbacks=[CommandHandler("cancel",cancel)])
+    calc_conv=ConversationHandler(entry_points=[CommandHandler("new",begin),CallbackQueryHandler(begin,pattern="^new$")],states={PRODUCT:[MessageHandler(filters.TEXT & ~filters.COMMAND,product)],PACKAGING:[MessageHandler(filters.TEXT & ~filters.COMMAND,packaging)],PACKAGES:[MessageHandler(filters.TEXT & ~filters.COMMAND,packages)],GROSS_KG:[MessageHandler(filters.TEXT & ~filters.COMMAND,gross)],PRODUCT_PRICE:[MessageHandler(filters.TEXT & ~filters.COMMAND,product_price)],PACK_LABOR:[MessageHandler(filters.TEXT & ~filters.COMMAND,pack_labor)],PROFIT:[MessageHandler(filters.TEXT & ~filters.COMMAND,profit)],LAND:[MessageHandler(filters.TEXT & ~filters.COMMAND,land)],CLEARANCE:[MessageHandler(filters.TEXT & ~filters.COMMAND,clearance)],SEA:[MessageHandler(filters.TEXT & ~filters.COMMAND,sea)],SEA_PAYMENT:[MessageHandler(filters.TEXT & ~filters.COMMAND,sea_payment)],TEHRAN_TAX:[MessageHandler(filters.TEXT & ~filters.COMMAND,tehran_tax)],UAE_AED_RATE:[MessageHandler(filters.TEXT & ~filters.COMMAND,uae_aed_rate)],SWITCH_BILL:[MessageHandler(filters.TEXT & ~filters.COMMAND,switch_bill)],CROSS_STUFFING:[MessageHandler(filters.TEXT & ~filters.COMMAND,cross_stuffing)],FX:[MessageHandler(filters.TEXT & ~filters.COMMAND,fx)],DESTINATION:[MessageHandler(filters.TEXT & ~filters.COMMAND,destination)],CUSTOMER:[MessageHandler(filters.TEXT & ~filters.COMMAND,customer_name)]},fallbacks=[CommandHandler("cancel",cancel)])
+    app.add_handler(CommandHandler("start",start)); app.add_handler(CommandHandler("contact",creator_contact)); app.add_handler(CommandHandler("help",help_command)); app.add_handler(CommandHandler("myid",myid)); app.add_handler(CommandHandler("license",license_command)); app.add_handler(CommandHandler("admin",admin_command)); app.add_handler(profile_conv); app.add_handler(calc_conv)
+    app.add_handler(CallbackQueryHandler(admin_action,pattern=r"^(lic30|lic90|lic365|licperm|liclist|userlist)$")); app.add_handler(CallbackQueryHandler(callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,route_text))
+    log.info("TTA Export Calculator v%s started",VERSION); app.run_polling()
 
-    app = Application.builder().token(TOKEN).post_init(post_init).build()
-
-    profile_conversation = ConversationHandler(
-        entry_points=[
-            CommandHandler("profile", profile_start),
-            CallbackQueryHandler(profile_start, pattern="^profile$")
-        ],
-        states={
-            PROFILE_COMPANY: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_company)],
-            PROFILE_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_address)],
-            PROFILE_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_phone)],
-            PROFILE_LOGO: [
-                MessageHandler(filters.PHOTO, profile_logo),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, profile_logo),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-
-    calculation_conversation = ConversationHandler(
-        entry_points=[
-            CommandHandler("new", begin),
-            CallbackQueryHandler(begin, pattern="^new$")
-        ],
-        states={
-            PRODUCT: [MessageHandler(filters.TEXT & ~filters.COMMAND, product)],
-            PACKAGING: [MessageHandler(filters.TEXT & ~filters.COMMAND, packaging)],
-            PACKAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, packages)],
-            GROSS_KG: [MessageHandler(filters.TEXT & ~filters.COMMAND, gross)],
-            PRODUCT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, product_price)],
-            PACK_LABOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, pack_labor)],
-            PROFIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, profit)],
-            LAND: [MessageHandler(filters.TEXT & ~filters.COMMAND, land)],
-            CLEARANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, clearance)],
-            SEA: [MessageHandler(filters.TEXT & ~filters.COMMAND, sea)],
-            SEA_PAYMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, sea_payment)],
-            TEHRAN_TAX: [MessageHandler(filters.TEXT & ~filters.COMMAND, tehran_tax)],
-            UAE_AED_RATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, uae_aed_rate)],
-            SWITCH_BILL: [MessageHandler(filters.TEXT & ~filters.COMMAND, switch_bill)],
-            CROSS_STUFFING: [MessageHandler(filters.TEXT & ~filters.COMMAND, cross_stuffing)],
-            FX: [MessageHandler(filters.TEXT & ~filters.COMMAND, fx)],
-            DESTINATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, destination)],
-            CUSTOMER: [MessageHandler(filters.TEXT & ~filters.COMMAND, customer_name)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("contact", contact))
-    app.add_handler(profile_conversation)
-    app.add_handler(calculation_conversation)
-    app.add_handler(CallbackQueryHandler(buttons))
-
-    log.info("TTA Export Calculator v5.4.0 started.")
-    app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
+if __name__=="__main__": main()
