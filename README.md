@@ -1,118 +1,48 @@
-## ✨ v6.0.3 Features | امکانات
+# T.T.A Export Cost Calculator Bot
 
-- 🇮🇷 فارسی + 🇬🇧 English در تمام مراحل محاسبه
-- 📦 Product / نوع و نام محصول — Example: `Dates / خرما`
-- 📦 Packaging / نوع بسته‌بندی — Example: `Carton / کارتن`
-- 🔢 Number of packages / تعداد بسته‌ها — Example: `3500`
-- ⚖️ Gross weight per package / وزن ناخالص هر بسته — Example: `6.800 KG`
-- ⚖️ Net weight per package / وزن خالص هر بسته — Example: `6.500 KG`
-- 💰 Product purchase price / قیمت خرید محصول — Example: `133000 Toman/KG`
-- 📦 Packaging & labor / بسته‌بندی و کارگر — Example: `3000 Toman/KG`
-- 📈 Profit margin / حاشیه سود — Example: `6000 Toman/KG`
-- 🚚 Inland freight / حمل زمینی تا بندرعباس
-- 🛃 Customs clearance / هزینه ترخیص
-- 🚢 Sea freight / حمل دریایی به USD
-- 🇮🇷 Tehran payment + configurable tax / پرداخت تهران + مالیات قابل تنظیم
-- 🇦🇪 UAE payment in AED / پرداخت امارات به AED
-- 🧾 Switch Bill / Cross Stuffing
-- 💱 USD exchange rate / نرخ دلار
-- 📍 Destination / مقصد
-- 👤 Customer / مشتری
-- 📄 Customer-safe English quotation PDF
-- 🎁 One-time 7-day trial / دوره آزمایشی ۷ روزه
-- 🔐 Per-user license / لایسنس اختصاصی هر کاربر
-- 👑 Admin & license management
-- 🔑 Automatic license generation
-- 🏢 Company profile and logo / پروفایل شرکت و لوگو
-- 💾 SQLite database
+**A bilingual Telegram assistant for export cost estimation and customer-ready quotations.**
 
-## 🧮 Calculation Basis | مبنای محاسبه
-
-**Gross Weight is the pricing basis.**
-
-وزن ناخالص مبنای محاسبه قیمت است.
-
-`Total Gross Weight = Number of Packages × Gross Weight per Package`
-
-Customer price is automatically rounded **up** to the next `$0.05`.
-
-مثال: `$1.245 → $1.25`
-
-Net weight is retained as product information and can appear on the customer quotation.
-
-## 🔐 Railway Variables | متغیرهای Railway
-
-### Required | ضروری
-
-```text
-TELEGRAM_BOT_TOKEN
-TTA_ADMIN_IDS
-```
-
-### Recommended | پیشنهادی
-
-```text
-TTA_DB_PATH=/data/tta_bot.db
-TTA_TRIAL_DAYS=7
-TTA_CREATOR_NAME=Amir Shabanian
-TTA_CREATOR_PHONE=+98 939 625 5418
-TTA_CREATOR_WHATSAPP=989396255418
-TTA_CREATOR_TELEGRAM=<your_telegram_username>
-```
-
-**Never put Telegram tokens, API keys, passwords, or private secrets in GitHub.**
-
-## 🚀 Railway Deployment | استقرار روی Railway
-
-Start command:
-
-```text
-python bot.py
-```
-
-For production, attach a persistent Railway Volume and use:
-
-```text
-TTA_DB_PATH=/data/tta_bot.db
-```
-
-If Auto Deploy is enabled, Railway will deploy the latest commit from GitHub. Otherwise, use **Redeploy** from the Railway service.
-
-## 🤖 BotFather Commands
-
-```text
-start - شروع کار با ربات
-new - محاسبه جدید قیمت صادرات
-profile - پروفایل شرکت
-contact - ارتباط با سازنده
-help - راهنمای استفاده از ربات
-license - مدیریت لایسنس
-```
-
-## 🏢 T.T.A
-
-**Tamana Tejarat Armaghan (T.T.A)**
-
-Professional export/import, customs and international trade services.
-
-**تمنا تجارت ارمغان (T.T.A)**
-
-خدمات صادرات، واردات، ثبت سفارش، امور گمرکی و تجارت بین‌الملل.
-
----
-
-### Version 6.0.3
-Professional bilingual export-cost calculation and customer quotation system.
-📞 Contact the Developer | ارتباط با سازنده
-
-Amir Shabanian
+Developed by **Amir Shabanian**  
 Founder of Shabanian Trading | Business Partner at Tamana Tejarat Armaghan (T.T.A)
 
-For questions, feedback, collaboration, or support regarding T.T.A Export Calculator, feel free to contact me.
+## Overview
 
-برای پرسش، ارسال پیشنهاد، همکاری یا حمایت از توسعه این پروژه، از راه‌های زیر با من در ارتباط باشید.
+T.T.A Export Cost Calculator helps exporters estimate shipment costs and prepare a clean, English-language quotation PDF for customers. It is built with Python, `python-telegram-bot`, SQLite, and ReportLab.
 
-- WhatsApp: "Contact me on WhatsApp" (https://wa.me/qr/DDNAEFASNGBAP1)
-- Telegram: "@tamana_tejarat" (http://t.me/tamana_tejarat)
+## Core workflow
 
-Thank you for supporting this project! ☕UQDRwAh-L8KRqTIxoDBTmBs-oc0qwF3fTIqVN0oqJpSLjdCZ
+1. Enter product and packaging details.
+2. Enter package count, gross/net weight, and product cost.
+3. Add packing/labor, inland transport, customs, and sea freight.
+4. Select freight payment method and enter applicable exchange rates.
+5. Calculate landed cost and a customer quote rounded upward to the next USD 0.05.
+6. Generate a customer-facing PDF that excludes internal cost breakdowns.
+
+## Features
+
+- Persian and English prompts
+- Shipment cost calculations
+- Tehran freight payment with configurable tax
+- UAE freight payment in AED with configurable USD/AED rate
+- Optional switch-bill and cross-stuffing charges
+- Customer quotation PDF
+- SQLite-backed user/license data
+- Admin tools and trial/license workflow (depending on deployed bot version)
+
+## Deployment notes
+
+- Store the Telegram bot token only in hosting environment variables. Never commit it to GitHub.
+- Run only **one polling instance** for a bot token. Multiple instances can trigger `Conflict: terminated by other getUpdates request`.
+- Configure a persistent Railway Volume for SQLite; temporary container storage may be lost during redeployment.
+- Verify admin configuration and test a full calculation and PDF after deployment.
+
+## Contact the developer
+
+**Amir Shabanian**  
+Founder of Shabanian Trading | Business Partner at Tamana Tejarat Armaghan (T.T.A)
+
+- WhatsApp: [Contact on WhatsApp](https://wa.me/qr/DDNAEFASNGBAP1)
+- Telegram: [@tamana_tejarat](https://t.me/tamana_tejarat)
+- TON wallet (optional project support): `UQDRwAh-L8KRqTIxoDBTmBs-oc0qwF3fTIqVN0oqJpSLjdCZ`
+
+Thank you for using and supporting this project.
