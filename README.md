@@ -1,28 +1,3 @@
-📞 Contact the Developer | ارتباط با سازنده
-
-Amir Shabanian
-Founder of Shabanian Trading | Business Partner at Tamana Tejarat Armaghan (T.T.A)
-
-For questions, feedback, collaboration, or support regarding T.T.A Export Calculator, feel free to contact me.
-
-برای پرسش، ارسال پیشنهاد، همکاری یا حمایت از توسعه این پروژه، از راه‌های زیر با من در ارتباط باشید.
-
-- WhatsApp: "Contact me on WhatsApp" (https://wa.me/qr/DDNAEFASNGBAP1)
-- Telegram: "@tamana_tejarat" (http://t.me/tamana_tejarat)
-
-Thank you for supporting this project! ☕
-# 🇮🇷🇬🇧 T.T.A Export Calculator — v6.0.3
-
-![T.T.A Export Calculator](github_banner.png)
-
-## 🌿 Professional Bilingual Telegram Export Calculator
-
-**محاسبه حرفه‌ای قیمت تمام‌شده صادرات و صدور Customer Quotation**
-
-A professional Telegram bot for calculating export landed cost and generating a customer-safe quotation PDF.
-
-ربات حرفه‌ای تلگرام برای محاسبه قیمت تمام‌شده صادرات و صدور پیش‌فاکتور/Quotation امن برای مشتری.
-
 ## ✨ v6.0.3 Features | امکانات
 
 - 🇮🇷 فارسی + 🇬🇧 English در تمام مراحل محاسبه
@@ -128,3 +103,16 @@ Professional export/import, customs and international trade services.
 
 ### Version 6.0.3
 Professional bilingual export-cost calculation and customer quotation system.
+📞 Contact the Developer | ارتباط با سازنده
+
+Amir Shabanian
+Founder of Shabanian Trading | Business Partner at Tamana Tejarat Armaghan (T.T.A)
+
+For questions, feedback, collaboration, or support regarding T.T.A Export Calculator, feel free to contact me.
+
+برای پرسش، ارسال پیشنهاد، همکاری یا حمایت از توسعه این پروژه، از راه‌های زیر با من در ارتباط باشید.
+
+- WhatsApp: "Contact me on WhatsApp" (https://wa.me/qr/DDNAEFASNGBAP1)
+- Telegram: "@tamana_tejarat" (http://t.me/tamana_tejarat)
+
+Thank you for supporting this project! ☕UQDRwAh-L8KRqTIxoDBTmBs-oc0qwF3fTIqVN0oqJpSLjdCZ
