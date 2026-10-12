@@ -1,3 +1,16 @@
+📞 Contact the Developer | ارتباط با سازنده
+
+Amir Shabanian
+Founder of Shabanian Trading | Business Partner at Tamana Tejarat Armaghan (T.T.A)
+
+For questions, feedback, collaboration, or support regarding T.T.A Export Calculator, feel free to contact me.
+
+برای پرسش، ارسال پیشنهاد، همکاری یا حمایت از توسعه این پروژه، از راه‌های زیر با من در ارتباط باشید.
+
+- WhatsApp: "Contact me on WhatsApp" (https://wa.me/qr/DDNAEFASNGBAP1)
+- Telegram: "@tamana_tejarat" (http://t.me/tamana_tejarat)
+
+Thank you for supporting this project! ☕
 # 🇮🇷🇬🇧 T.T.A Export Calculator — v6.0.3
 
 ![T.T.A Export Calculator](github_banner.png)
