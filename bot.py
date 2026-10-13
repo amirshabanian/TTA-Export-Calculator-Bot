@@ -1,4 +1,4 @@
-# T.T.A EXPORT CALCULATOR v6.0.3
+# T.T.A EXPORT CALCULATOR v6.0.4
 # Professional bilingual Telegram export-cost calculator
 # 7-day trial + per-user licenses + admin panel + bilingual calculation flow
 
@@ -21,7 +21,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, filters
 )
 
-VERSION = "6.0.3"
+VERSION = "6.0.4"
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DB_PATH = os.getenv("TTA_DB_PATH", "tta_bot.db")
 TRIAL_DAYS = int(os.getenv("TTA_TRIAL_DAYS", "7"))
