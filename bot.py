@@ -1,4 +1,4 @@
-# T.T.A EXPORT CALCULATOR v6.0.5
+# T.T.A EXPORT CALCULATOR v6.1.0 STABLE
 # Professional bilingual Telegram export-cost calculator
 # 7-day trial + per-user licenses + admin panel + bilingual calculation flow
 
@@ -7,6 +7,8 @@ import logging
 import sqlite3
 import secrets
 import string
+import html
+import math
 from decimal import Decimal, InvalidOperation, ROUND_UP
 from datetime import datetime, timedelta, timezone
 
@@ -21,7 +23,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, filters
 )
 
-VERSION = "6.0.5"
+VERSION = "6.1.0"
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DB_PATH = os.getenv("TTA_DB_PATH", "tta_bot.db")
 TRIAL_DAYS = int(os.getenv("TTA_TRIAL_DAYS", "7"))
@@ -62,8 +64,13 @@ def parse_dt(value):
 
 
 def db_connect():
-    conn = sqlite3.connect(DB_PATH)
+    # Create the parent directory when a Railway Volume path is configured.
+    db_parent = os.path.dirname(os.path.abspath(DB_PATH))
+    os.makedirs(db_parent, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=30, isolation_level="DEFERRED")
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""CREATE TABLE IF NOT EXISTS company_profiles(
         user_id TEXT PRIMARY KEY, company_name TEXT NOT NULL,
@@ -240,8 +247,16 @@ def admin_stats():
 
 
 def to_decimal(value):
+    # Accept Western, Persian, and Arabic-Indic digits and common separators.
+    raw = str(value).strip().translate(str.maketrans(
+        "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789"
+    ))
+    raw = raw.replace(",", "").replace("٬", "").replace("٫", ".")
     try:
-        return Decimal(str(value).replace(",", "").replace("٬", "").replace("٫", ".").strip())
+        number = Decimal(raw)
+        if not number.is_finite():
+            raise ValueError("Number must be finite")
+        return number
     except (InvalidOperation, ValueError):
         raise ValueError("Invalid number")
 
@@ -471,7 +486,7 @@ async def begin(update, context):
         await update.callback_query.answer()
     context.user_data.clear()
     await msg.reply_text(
-        "📦 <b>STEP 1/19 — Product</b>\n\n"
+        "📦 <b>STEP 1/18 — Product</b>\n\n"
         "نوع / نام محصول را وارد کنید.\n"
         "Enter product name / type.\n\n"
         "مثال / Example: <b>Dates / خرما</b>",
@@ -508,7 +523,7 @@ async def numeric_field(update, context, key, prompt, state, minimum=0):
 async def product(update, c):
     return await text_field(
         update, c, "product",
-        "📦 <b>STEP 2/19 — Packaging</b>\n\n"
+        "📦 <b>STEP 2/18 — Packaging</b>\n\n"
         "نوع بسته‌بندی را وارد کنید.\nEnter packaging type.\n\n"
         "مثال / Example: <b>Carton / کارتن</b>",
         PACKAGING,
@@ -518,7 +533,7 @@ async def product(update, c):
 async def packaging(update, c):
     return await text_field(
         update, c, "packaging",
-        "🔢 <b>STEP 3/19 — Number of Packages</b>\n\n"
+        "🔢 <b>STEP 3/18 — Number of Packages</b>\n\n"
         "تعداد کل بسته‌ها را وارد کنید.\nEnter total number of packages.\n\n"
         "مثال / Example: <b>3500</b>",
         PACKAGES,
@@ -528,7 +543,7 @@ async def packaging(update, c):
 async def packages(update, c):
     return await numeric_field(
         update, c, "packages",
-        "⚖️ <b>STEP 4/19 — Gross Weight / بسته</b>\n\n"
+        "⚖️ <b>STEP 4/18 — Gross Weight / بسته</b>\n\n"
         "وزن ناخالص هر بسته را به KG وارد کنید.\n"
         "Enter gross weight per package in KG.\n\n"
         "مثال / Example: <b>6.800 KG</b>",
@@ -539,7 +554,7 @@ async def packages(update, c):
 async def gross(update, c):
     return await numeric_field(
         update, c, "gross_kg",
-        "⚖️ <b>STEP 5/19 — Net Weight / بسته</b>\n\n"
+        "⚖️ <b>STEP 5/18 — Net Weight / بسته</b>\n\n"
         "وزن خالص هر بسته را به KG وارد کنید.\n"
         "Enter net weight per package in KG.\n\n"
         "مثال / Example: <b>6.500 KG</b>",
@@ -562,7 +577,7 @@ async def net(update, c):
         return NET_KG
     c.user_data["net_kg"] = update.message.text.strip()
     await update.message.reply_text(
-        "💰 <b>STEP 6/19 — Product Purchase Price</b>\n\n"
+        "💰 <b>STEP 6/18 — Product Purchase Price</b>\n\n"
         "قیمت خرید محصول به ازای هر KG، به تومان را وارد کنید.\n"
         "Enter product purchase price per KG in Toman.\n\n"
         "مثال / Example: <b>133000</b>",
@@ -574,7 +589,7 @@ async def net(update, c):
 async def product_price(update, c):
     return await numeric_field(
         update, c, "product_price",
-        "📦 <b>STEP 7/19 — Packaging & Labor</b>\n\n"
+        "📦 <b>STEP 7/18 — Packaging & Labor</b>\n\n"
         "هزینه بسته‌بندی و کارگر به ازای هر KG، به تومان را وارد کنید.\n"
         "Enter packaging & labor cost per KG in Toman.\n\n"
         "مثال / Example: <b>3000</b>",
@@ -585,7 +600,7 @@ async def product_price(update, c):
 async def pack_labor(update, c):
     return await numeric_field(
         update, c, "pack_labor",
-        "📈 <b>STEP 8/19 — Profit Margin</b>\n\n"
+        "📈 <b>STEP 8/18 — Profit Margin</b>\n\n"
         "حاشیه سود محصول به ازای هر KG، به تومان را وارد کنید.\n"
         "Enter product profit margin per KG in Toman.\n\n"
         "مثال / Example: <b>6000</b>",
@@ -596,7 +611,7 @@ async def pack_labor(update, c):
 async def profit(update, c):
     return await numeric_field(
         update, c, "profit",
-        "🚚 <b>STEP 9/19 — Inland Freight</b>\n\n"
+        "🚚 <b>STEP 9/18 — Inland Freight</b>\n\n"
         "هزینه حمل زمینی تا بندرعباس، به تومان را وارد کنید.\n"
         "Enter inland freight to Bandar Abbas in Toman.",
         LAND,
@@ -606,7 +621,7 @@ async def profit(update, c):
 async def land(update, c):
     return await numeric_field(
         update, c, "land",
-        "🛃 <b>STEP 10/19 — Customs Clearance</b>\n\n"
+        "🛃 <b>STEP 10/18 — Customs Clearance</b>\n\n"
         "هزینه ترخیص، به تومان را وارد کنید.\n"
         "Enter customs clearance cost in Toman.",
         CLEARANCE,
@@ -616,7 +631,7 @@ async def land(update, c):
 async def clearance(update, c):
     return await numeric_field(
         update, c, "clearance",
-        "🚢 <b>STEP 11/19 — Sea Freight</b>\n\n"
+        "🚢 <b>STEP 11/18 — Sea Freight</b>\n\n"
         "هزینه حمل دریایی را به USD وارد کنید.\n"
         "Enter sea freight in USD.",
         SEA,
@@ -633,7 +648,7 @@ async def sea(update, c):
         return SEA
     c.user_data["sea_usd"] = update.message.text.strip()
     await update.message.reply_text(
-        "💳 <b>STEP 12/19 — Sea Freight Payment Method</b>\n\n"
+        "💳 <b>STEP 12/18 — Sea Freight Payment Method</b>\n\n"
         "روش پرداخت حمل دریایی را انتخاب کنید:\n"
         "Select payment method:\n\n"
         "1️⃣ تهران — USD + 3% Tax\n"
@@ -649,7 +664,7 @@ async def sea_payment(update, c):
     if value in {"1", "تهران", "tehran", "iran"}:
         c.user_data["sea_payment_method"] = "tehran"
         await update.message.reply_text(
-            "🇮🇷 <b>STEP 13/19 — Tehran Tax</b>\n\n"
+            "🇮🇷 <b>STEP 13/18 — Tehran Tax</b>\n\n"
             "درصد مالیات/هزینه تهران را وارد کنید.\n"
             "Enter Tehran tax/cost percentage.\n\n"
             "پیش‌فرض / Default: <b>3</b>",
@@ -659,7 +674,7 @@ async def sea_payment(update, c):
     if value in {"2", "امارات", "uae", "dubai", "ابوظبی"}:
         c.user_data["sea_payment_method"] = "uae"
         await update.message.reply_text(
-            "🇦🇪 <b>STEP 13/19 — USD/AED Rate</b>\n\n"
+            "🇦🇪 <b>STEP 13/18 — USD/AED Rate</b>\n\n"
             "نرخ پرداخت USD/AED را وارد کنید.\n"
             "Enter USD/AED payment rate.\n\n"
             "پیش‌فرض / Default: <b>3.685</b>",
@@ -679,7 +694,7 @@ async def tehran_tax(update, c):
         return TEHRAN_TAX
     c.user_data["tehran_tax_pct"] = update.message.text.strip()
     await update.message.reply_text(
-        "🧾 <b>STEP 14/19 — Switch Bill</b>\n\n"
+        "🧾 <b>STEP 14/18 — Switch Bill</b>\n\n"
         "هزینه Switch Bill به USD را وارد کنید؛ اگر ندارید 0 بزنید.\n"
         "Enter Switch Bill cost in USD; enter 0 if none.",
         parse_mode="HTML",
@@ -696,7 +711,7 @@ async def uae_aed_rate(update, c):
         return UAE_AED_RATE
     c.user_data["uae_aed_rate"] = update.message.text.strip()
     await update.message.reply_text(
-        "🧾 <b>STEP 14/19 — Switch Bill</b>\n\n"
+        "🧾 <b>STEP 14/18 — Switch Bill</b>\n\n"
         "هزینه Switch Bill به USD را وارد کنید؛ اگر ندارید 0 بزنید.\n"
         "Enter Switch Bill cost in USD; enter 0 if none.",
         parse_mode="HTML",
@@ -707,7 +722,7 @@ async def uae_aed_rate(update, c):
 async def switch_bill(update, c):
     return await numeric_field(
         update, c, "switch_bill_usd",
-        "📦 <b>STEP 15/19 — Cross Stuffing</b>\n\n"
+        "📦 <b>STEP 15/18 — Cross Stuffing</b>\n\n"
         "هزینه Cross Stuffing به USD را وارد کنید؛ اگر ندارید 0 بزنید.\n"
         "Enter Cross Stuffing cost in USD; enter 0 if none.",
         CROSS_STUFFING,
@@ -717,9 +732,9 @@ async def switch_bill(update, c):
 async def cross_stuffing(update, c):
     return await numeric_field(
         update, c, "cross_stuffing_usd",
-        "💱 <b>STEP 16/19 — USD Exchange Rate</b>\n\n"
+        "💱 <b>STEP 16/18 — USD Exchange Rate</b>\n\n"
         "نرخ دلار به تومان را وارد کنید.\n"
-        "Enter USD/IRR exchange rate.\n\n"
+        "Enter USD/Toman exchange rate.\n\n"
         "مثال / Example: <b>187000</b>",
         FX,
     )
@@ -728,7 +743,7 @@ async def cross_stuffing(update, c):
 async def fx(update, c):
     return await numeric_field(
         update, c, "fx",
-        "📍 <b>STEP 17/19 — Destination</b>\n\n"
+        "📍 <b>STEP 17/18 — Destination</b>\n\n"
         "مقصد را وارد کنید.\nEnter destination.\n\n"
         "مثال / Example: <b>Nhava Sheva, India</b>",
         DESTINATION,
@@ -739,7 +754,7 @@ async def fx(update, c):
 async def destination(update, c):
     return await text_field(
         update, c, "destination",
-        "👤 <b>STEP 18/19 — Customer</b>\n\n"
+        "👤 <b>STEP 18/18 — Customer</b>\n\n"
         "نام مشتری را وارد کنید.\nEnter customer name.",
         CUSTOMER,
     )
@@ -768,8 +783,8 @@ async def customer_name(update, c):
 
     await update.message.reply_text(
         "✅ <b>CALCULATION COMPLETE | محاسبه انجام شد</b>\n\n"
-        f"📦 Product: {data['product']}\n"
-        f"📦 Packaging: {data['packaging']}\n"
+        f"📦 Product: {html.escape(str(data['product']))}\n"
+        f"📦 Packaging: {html.escape(str(data['packaging']))}\n"
         f"🔢 Packages: {money(to_decimal(data['packages']),0)}\n"
         f"⚖️ Gross Weight: {money(result['total_gross'],2)} KG\n"
         f"⚖️ Net Weight: {money(result['total_net'],2)} KG\n\n"
@@ -794,7 +809,8 @@ async def profile_start(update, c):
         msg = q.message
     else:
         msg = update.message
-    c.user_data.clear()
+    for _key in ("profile_company", "profile_address", "profile_phone", "profile_logo"):
+        c.user_data.pop(_key, None)
     await msg.reply_text(
         "🏢 <b>Company Profile</b>\n\nنام شرکت را وارد کنید.\nEnter company name.",
         parse_mode="HTML",
@@ -866,7 +882,7 @@ def create_customer_pdf(data, result, profile, path, logo_path=None):
 
     company = Table([[
         Paragraph(
-            f"<b>{profile['company_name']}</b><br/>{profile['address']}<br/>Mobile: {profile['phone']}",
+            f"<b>{html.escape(str(profile['company_name']))}</b><br/>{html.escape(str(profile['address']))}<br/>Mobile: {html.escape(str(profile['phone']))}",
             body
         )
     ]], colWidths=[520])
@@ -880,13 +896,13 @@ def create_customer_pdf(data, result, profile, path, logo_path=None):
     rows = [
         ["Quotation No.", datetime.now().strftime("TTA-%Y%m%d-%H%M")],
         ["Date", datetime.now().strftime("%Y/%m/%d")],
-        ["Customer", data.get("customer_name","-")],
-        ["Product", data["product"]],
-        ["Packaging", data["packaging"]],
+        ["Customer", html.escape(str(data.get("customer_name","-")))],
+        ["Product", html.escape(str(data["product"]))],
+        ["Packaging", html.escape(str(data["packaging"]))],
         ["Packages", money(to_decimal(data["packages"]),0)],
         ["Gross Weight", f"{money(result['total_gross'],2)} KG"],
         ["Net Weight", f"{money(result['total_net'],2)} KG"],
-        ["Destination", data["destination"]],
+        ["Destination", html.escape(str(data["destination"]))],
     ]
     table = Table(rows, colWidths=[170,350])
     table.setStyle(TableStyle([
@@ -1064,16 +1080,16 @@ async def callback(update, context):
 
         await q.message.reply_text(
             f"📄 <b>EXPORT QUOTATION</b>\n\n"
-            f"Customer: {values.get('customer_name','-')}\n"
-            f"Product: {values['product']}\n"
-            f"Packaging: {values['packaging']}\n"
+            f"Customer: {html.escape(str(values.get('customer_name','-')))}\n"
+            f"Product: {html.escape(str(values['product']))}\n"
+            f"Packaging: {html.escape(str(values['packaging']))}\n"
             f"Packages: {money(to_decimal(values['packages']),0)}\n"
             f"Gross Weight: {money(result['total_gross'],2)} KG\n"
             f"Net Weight: {money(result['total_net'],2)} KG\n"
-            f"Destination: {values['destination']}\n\n"
+            f"Destination: {html.escape(str(values['destination']))}\n\n"
             f"<b>FINAL OFFER PRICE: {money(result['customer_price'],2)} USD/KG</b>\n"
             f"TOTAL SHIPMENT VALUE: {money(result['shipment_value'],2)} USD\n\n"
-            f"{profile['company_name']}\n{profile['address']}\nMobile: {profile['phone']}",
+            f"{html.escape(str(profile['company_name']))}\n{html.escape(str(profile['address']))}\nMobile: {html.escape(str(profile['phone']))}",
             parse_mode="HTML",
         )
 
@@ -1098,6 +1114,40 @@ async def callback(update, context):
                     os.remove(path)
                 except OSError:
                     pass
+
+
+async def unexpected_input(update, context):
+    if update.effective_message:
+        await update.effective_message.reply_text(
+            "لطفاً پاسخ همین مرحله را به‌صورت متن ارسال کنید؛ برای خروج /cancel را بزنید.\n"
+            "Please answer this step with text, or send /cancel to exit."
+        )
+    # Returning None preserves the current ConversationHandler state.
+    return None
+
+
+async def menu_interrupt(update, context):
+    """Exit an active wizard when the user presses a main-menu button."""
+    q = update.callback_query
+    if q:
+        await q.answer()
+        await q.message.reply_text(
+            "عملیات فعلی متوقف شد. / Current operation stopped.",
+            reply_markup=main_keyboard(q.from_user.id),
+        )
+    return ConversationHandler.END
+
+
+async def error_handler(update, context):
+    log.error("Unhandled update error", exc_info=context.error)
+    try:
+        if update and update.effective_message:
+            await update.effective_message.reply_text(
+                "⚠️ خطای موقت رخ داد. لطفاً دوباره تلاش کنید یا /cancel بزنید.\n"
+                "A temporary error occurred. Please retry or send /cancel."
+            )
+    except Exception:
+        log.exception("Could not send error notice to user")
 
 
 async def cancel(update, context):
@@ -1139,23 +1189,32 @@ def main():
 
     db_connect().close()
     log.info("SQLite database path: %s", os.path.abspath(DB_PATH))
+    if DB_PATH == "tta_bot.db":
+        log.warning("TTA_DB_PATH is not set; database may be ephemeral on Railway. Configure a persistent Volume.")
     app = Application.builder().token(TOKEN).post_init(post_init).build()
 
     profile_conv = ConversationHandler(
         entry_points=[
-            CommandHandler("profile", profile_start),
+            CommandHandler("profile", cancel),
             CallbackQueryHandler(profile_start, pattern=r"^profile$"),
         ],
         states={
-            PROFILE_COMPANY: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_company)],
-            PROFILE_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_address)],
-            PROFILE_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_phone)],
+            PROFILE_COMPANY: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_company), MessageHandler(~filters.COMMAND, unexpected_input)],
+            PROFILE_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_address), MessageHandler(~filters.COMMAND, unexpected_input)],
+            PROFILE_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_phone), MessageHandler(~filters.COMMAND, unexpected_input)],
             PROFILE_LOGO: [
                 MessageHandler(filters.PHOTO, profile_logo),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, profile_logo),
+                MessageHandler(~filters.COMMAND, unexpected_input),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CommandHandler("start", start),
+            CommandHandler("profile", cancel),
+            CallbackQueryHandler(menu_interrupt, pattern=r"^(home|profile|license|help|contact|admin)$"),
+        ],
+        allow_reentry=True,
     )
 
     calc_conv = ConversationHandler(
@@ -1164,27 +1223,34 @@ def main():
             CallbackQueryHandler(begin, pattern=r"^new$"),
         ],
         states={
-            PRODUCT: [MessageHandler(filters.TEXT & ~filters.COMMAND, product)],
-            PACKAGING: [MessageHandler(filters.TEXT & ~filters.COMMAND, packaging)],
-            PACKAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, packages)],
-            GROSS_KG: [MessageHandler(filters.TEXT & ~filters.COMMAND, gross)],
-            NET_KG: [MessageHandler(filters.TEXT & ~filters.COMMAND, net)],
-            PRODUCT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, product_price)],
-            PACK_LABOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, pack_labor)],
-            PROFIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, profit)],
-            LAND: [MessageHandler(filters.TEXT & ~filters.COMMAND, land)],
-            CLEARANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, clearance)],
-            SEA: [MessageHandler(filters.TEXT & ~filters.COMMAND, sea)],
-            SEA_PAYMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, sea_payment)],
-            TEHRAN_TAX: [MessageHandler(filters.TEXT & ~filters.COMMAND, tehran_tax)],
-            UAE_AED_RATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, uae_aed_rate)],
-            SWITCH_BILL: [MessageHandler(filters.TEXT & ~filters.COMMAND, switch_bill)],
-            CROSS_STUFFING: [MessageHandler(filters.TEXT & ~filters.COMMAND, cross_stuffing)],
-            FX: [MessageHandler(filters.TEXT & ~filters.COMMAND, fx)],
-            DESTINATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, destination)],
-            CUSTOMER: [MessageHandler(filters.TEXT & ~filters.COMMAND, customer_name)],
+            PRODUCT: [MessageHandler(filters.TEXT & ~filters.COMMAND, product), MessageHandler(~filters.COMMAND, unexpected_input)],
+            PACKAGING: [MessageHandler(filters.TEXT & ~filters.COMMAND, packaging), MessageHandler(~filters.COMMAND, unexpected_input)],
+            PACKAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, packages), MessageHandler(~filters.COMMAND, unexpected_input)],
+            GROSS_KG: [MessageHandler(filters.TEXT & ~filters.COMMAND, gross), MessageHandler(~filters.COMMAND, unexpected_input)],
+            NET_KG: [MessageHandler(filters.TEXT & ~filters.COMMAND, net), MessageHandler(~filters.COMMAND, unexpected_input)],
+            PRODUCT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, product_price), MessageHandler(~filters.COMMAND, unexpected_input)],
+            PACK_LABOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, pack_labor), MessageHandler(~filters.COMMAND, unexpected_input)],
+            PROFIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, profit), MessageHandler(~filters.COMMAND, unexpected_input)],
+            LAND: [MessageHandler(filters.TEXT & ~filters.COMMAND, land), MessageHandler(~filters.COMMAND, unexpected_input)],
+            CLEARANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, clearance), MessageHandler(~filters.COMMAND, unexpected_input)],
+            SEA: [MessageHandler(filters.TEXT & ~filters.COMMAND, sea), MessageHandler(~filters.COMMAND, unexpected_input)],
+            SEA_PAYMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, sea_payment), MessageHandler(~filters.COMMAND, unexpected_input)],
+            TEHRAN_TAX: [MessageHandler(filters.TEXT & ~filters.COMMAND, tehran_tax), MessageHandler(~filters.COMMAND, unexpected_input)],
+            UAE_AED_RATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, uae_aed_rate), MessageHandler(~filters.COMMAND, unexpected_input)],
+            SWITCH_BILL: [MessageHandler(filters.TEXT & ~filters.COMMAND, switch_bill), MessageHandler(~filters.COMMAND, unexpected_input)],
+            CROSS_STUFFING: [MessageHandler(filters.TEXT & ~filters.COMMAND, cross_stuffing), MessageHandler(~filters.COMMAND, unexpected_input)],
+            FX: [MessageHandler(filters.TEXT & ~filters.COMMAND, fx), MessageHandler(~filters.COMMAND, unexpected_input)],
+            DESTINATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, destination), MessageHandler(~filters.COMMAND, unexpected_input)],
+            CUSTOMER: [MessageHandler(filters.TEXT & ~filters.COMMAND, customer_name), MessageHandler(~filters.COMMAND, unexpected_input)],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CommandHandler("start", start),
+            CommandHandler("new", begin),
+            CommandHandler("profile", cancel),
+            CallbackQueryHandler(menu_interrupt, pattern=r"^(home|profile|license|help|contact|admin)$"),
+        ],
+        allow_reentry=True,
     )
 
     app.add_handler(CommandHandler("start", start))
@@ -1198,6 +1264,7 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_action, pattern=r"^(lic30|lic90|lic365|licperm|liclist|userlist)$"))
     app.add_handler(CallbackQueryHandler(callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_text))
+    app.add_error_handler(error_handler)
 
     log.info("TTA Export Calculator v%s started", VERSION)
     app.run_polling()

@@ -1,7 +1,9 @@
-__pycache__/
-*.pyc
-*.db
-*.sqlite
-*.sqlite3
 .env
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+*.py[cod]
 .venv/
+venv/
+.DS_Store

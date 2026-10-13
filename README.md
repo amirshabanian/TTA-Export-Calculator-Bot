@@ -1,64 +1,54 @@
-# T.T.A Export Calculator | محاسبه‌گر صادرات T.T.A
+# T.T.A Export Calculator — Stable 6.1.0
 
-**نسخه جاری / Current version: 6.0.5**  
-**Developed by Amir Shabanian | توسعه‌دهنده: امیر شعبانیان**  
-Shabanian Trading | بازرگانی شعبانیان  
-Tamana Tejarat Armaghan (T.T.A) | تمنا تجارت ارمغان
-
----
+**محاسبه‌گر صادرات T.T.A — نسخه پایدار ۶.۱.۰**  
+Developed by **Amir Shabanian** · Shabanian Trading / بازرگانی شعبانیان · Tamana Tejarat Armaghan (T.T.A) / تمنا تجارت ارمغان
 
 ## فارسی
 
-ربات تلگرام محاسبه قیمت تمام‌شده صادرات، محاسبه قیمت پیشنهادی مشتری و تولید پیش‌فاکتور PDF.
+ربات تلگرام دوزبانه برای محاسبه بهای تمام‌شده صادرات و ساخت پیش‌فاکتور PDF مشتری.
 
-### امکانات
-- رابط و راهنمای دوزبانه فارسی و انگلیسی
-- محاسبه هزینه محصول، بسته‌بندی و نیروی کار، سود، حمل داخلی، ترخیص و حمل دریایی
-- انتخاب روش پرداخت حمل دریایی: تهران با مالیات قابل تنظیم یا امارات با نرخ USD/AED
-- هزینه‌های Switch Bill و Cross Stuffing
-- محاسبه قیمت نهایی بر مبنای وزن ناخالص و گرد کردن رو به بالا با گام ۰٫۰۵ دلار به‌ازای هر کیلو
-- پروفایل شرکت و درج اطلاعات شرکت در پیش‌فاکتور مشتری
-- خروجی PDF مشتری بدون نمایش جزئیات محرمانه هزینه‌های داخلی
-- دوره آزمایشی، لایسنس و پنل مدیریت
+### امکانات نسخه ۶.۱.۰
+- رابط و راهنمای فارسی/انگلیسی.
+- محاسبه بر اساس **وزن ناخالص**؛ وزن خالص نیز برای اطلاعات و پیش‌فاکتور ثبت می‌شود.
+- محاسبه هزینه محصول، بسته‌بندی/کار، سود، حمل داخلی، ترخیص، حمل دریایی، Switch Bill و Cross Stuffing.
+- روش پرداخت حمل دریایی تهران (با درصد مالیات قابل تنظیم) یا امارات (نمایش معادل پرداخت AED با نرخ USD/AED).
+- گرد کردن قیمت نهایی مشتری رو به بالا با گام ۰٫۰۵ دلار به‌ازای هر کیلو.
+- پروفایل شرکت، لوگو و PDF مشتری؛ PDF فقط قیمت نهایی و مشخصات تجاری را نمایش می‌دهد و ریز هزینه‌ها/سود داخلی را افشا نمی‌کند.
+- آزمایشی ۷ روزه، لایسنس کاربرمحور و پنل مدیریت.
+- پذیرش اعداد فارسی/عربی در فیلدهای عددی، اعتبارسنجی ورودی، پیام خطای قابل‌فهم برای ورودی غیرمتنی.
+- امکان خروج از مراحل با `/cancel`؛ فرمان‌های منو در جریان مکالمه باعث گیرکردن دائمی مراحل نمی‌شوند.
+- SQLite با timeout و busy timeout برای کاهش خطاهای قفل دیتابیس.
 
-### نصب و استقرار در Railway
-1. فایل `bot.py` و `requirements.txt` را در مخزن قرار دهید.
-2. متغیر محیطی `TELEGRAM_BOT_TOKEN` را در Railway تنظیم کنید؛ توکن را در GitHub قرار ندهید.
-3. شناسه مدیر را در `TTA_ADMIN_IDS` تنظیم کنید.
-4. برای حفظ پروفایل‌ها و لایسنس‌ها، یک Railway Volume به مسیر `/data` متصل و متغیر `TTA_DB_PATH=/data/tta_bot.db` را تنظیم کنید. پیش از تغییر مسیر دیتابیس، از فایل دیتابیس فعلی نسخه پشتیبان بگیرید و در صورت وجود داده‌های قبلی، آن‌ها را منتقل کنید.
-5. فقط **یک نمونه فعال** از ربات را با همین توکن اجرا کنید؛ اجرای هم‌زمان چند نمونه می‌تواند خطای `Conflict: terminated by other getUpdates request` ایجاد کند.
-6. پس از Deploy، یک محاسبه کامل را تا دریافت PDF آزمایش کنید.
+### استقرار صحیح در Railway (مهم)
+1. محتوای ZIP را در ریشه مخزن GitHub قرار بده؛ `bot.py`, `requirements.txt`, `README.md`, `railway.json`, `Procfile`, `.gitignore` و `.env.example` باید در ریشه باشند.
+2. در Railway → Variables متغیر `TELEGRAM_BOT_TOKEN` را با توکن واقعی تنظیم کن. توکن را داخل GitHub یا پیام‌ها قرار نده.
+3. `TTA_ADMIN_IDS=5044844036` را تنظیم کن. چند شناسه را با کاما جدا کن.
+4. در Railway یک **Volume** به مسیر `/data` وصل کن و سپس `TTA_DB_PATH=/data/tta_bot.db` را تنظیم کن. این مرحله برای ماندگاری پروفایل، لایسنس و کاربران ضروری است.
+5. اگر قبلاً پروفایل/لایسنس ذخیره کرده‌ای، **قبل از تغییر `TTA_DB_PATH` از دیتابیس قبلی نسخه پشتیبان بگیر و آن را منتقل کن**؛ مسیر دیتابیس جدید و خالی شبیه پاک شدن پروفایل به نظر می‌رسد.
+6. فقط **یک سرویس/Replica فعال** با این توکن اجرا کن. اجرای هم‌زمان چند نسخه باعث خطای Telegram `Conflict: terminated by other getUpdates request` می‌شود.
+7. Deploy جدید را انجام بده و در Logs تأیید کن پیام `TTA Export Calculator v6.1.0 started` و مسیر درست دیتابیس دیده می‌شود.
 
-### نکته پایداری
-اطلاعات پروفایل در SQLite ذخیره می‌شود. اگر فایل دیتابیس روی فضای موقت سرویس باشد، ممکن است پس از استقرار مجدد از دسترس خارج شود. برای جلوگیری از این مشکل، Volume پایدار را تنظیم کنید و در لاگ شروع برنامه مسیر دیتابیس را بررسی کنید.
+### تست پس از استقرار
+- `/start` باید Version 6.1.0 نشان دهد.
+- پروفایل شرکت را ذخیره کن؛ بعد از Restart سرویس، وجود پروفایل را بررسی کن.
+- محاسبه آزمایشی را از محصول تا نام مشتری کامل کن و PDF مشتری بگیر.
+- در یک مرحله `/cancel` بزن و سپس یک محاسبه جدید شروع کن.
+- اعداد فارسی مثل `۱۲۳۴۵` را در یک ورودی عددی آزمایش کن.
 
----
+### نکته شفافیت
+این بسته با بررسی نحوی Python و تست‌های محاسباتی محلی آماده شده است؛ امکان آزمایش زنده با توکن تلگرام یا محیط Railway شما از اینجا وجود ندارد. بنابراین پس از Deploy، تست‌های بالا ضروری‌اند. پایداری اطلاعات روی Railway به تنظیم صحیح Volume وابسته است.
 
 ## English
 
-A bilingual Telegram bot for export landed-cost calculation and customer-ready PDF quotations.
+A bilingual Telegram bot for export landed-cost calculations and customer-ready PDF quotations.
 
-### Features
-- Persian and English prompts and menus
-- Product, packaging/labor, profit, inland transport, customs clearance, and sea freight calculations
-- Tehran freight payment with configurable tax, or UAE payment using a USD/AED rate
-- Switch Bill and Cross Stuffing charges
-- Customer price calculated per gross kilogram and rounded upward to the next USD 0.05
-- Company profile stored in SQLite and used in customer quotations
-- Customer-facing PDF excludes internal cost breakdowns
-- Trial, license, and administrator workflows
+### Deployment checklist
+- Keep all package files at the repository root.
+- Set `TELEGRAM_BOT_TOKEN` and `TTA_ADMIN_IDS` in Railway Variables only.
+- Attach a Railway Volume at `/data`, then set `TTA_DB_PATH=/data/tta_bot.db`.
+- Back up/migrate the old SQLite database before changing its path.
+- Run exactly one active polling instance for this bot token.
+- After deployment, verify version 6.1.0, profile persistence after restart, a complete calculation, PDF output, and `/cancel` recovery.
 
-### Railway deployment
-1. Commit `bot.py` and `requirements.txt` to the repository.
-2. Set `TELEGRAM_BOT_TOKEN` in Railway Variables. Never commit the token to GitHub.
-3. Set `TTA_ADMIN_IDS` to the authorized Telegram user ID(s).
-4. Attach a persistent Railway Volume at `/data` and set `TTA_DB_PATH=/data/tta_bot.db` to retain profiles and license data. Back up and migrate any existing database before changing its path.
-5. Run exactly **one active polling instance** per bot token to avoid Telegram polling conflicts.
-6. After deployment, test the complete calculation flow and PDF generation.
-
-### Support / ارتباط
-- **Amir Shabanian**
-- **Shabanian Trading | بازرگانی شعبانیان**
-- **Tamana Tejarat Armaghan (T.T.A) | تمنا تجارت ارمغان**
-- Telegram: [@tamana_tejarat](https://t.me/tamana_tejarat)
-- WhatsApp: [Contact](https://wa.me/qr/DDNAEFASNGBAP1)
+### Environment variables
+See `.env.example`. Never commit a real bot token or a database file.
