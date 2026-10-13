@@ -1,4 +1,4 @@
-# T.T.A EXPORT CALCULATOR v6.0.4
+# T.T.A EXPORT CALCULATOR v6.0.5
 # Professional bilingual Telegram export-cost calculator
 # 7-day trial + per-user licenses + admin panel + bilingual calculation flow
 
@@ -21,7 +21,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, filters
 )
 
-VERSION = "6.0.4"
+VERSION = "6.0.5"
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DB_PATH = os.getenv("TTA_DB_PATH", "tta_bot.db")
 TRIAL_DAYS = int(os.getenv("TTA_TRIAL_DAYS", "7"))
@@ -318,7 +318,7 @@ def main_keyboard(user_id):
 
 
 async def start(update, context):
-    context.user_data.clear()
+    # Keep per-user calculation/result state intact when the user opens the main menu.
     ensure_user(update.effective_user)
     await update.message.reply_text(
         f"🌿 <b>T.T.A EXPORT CALCULATOR</b>\n"
@@ -1138,6 +1138,7 @@ def main():
         raise RuntimeError("TELEGRAM_BOT_TOKEN is missing")
 
     db_connect().close()
+    log.info("SQLite database path: %s", os.path.abspath(DB_PATH))
     app = Application.builder().token(TOKEN).post_init(post_init).build()
 
     profile_conv = ConversationHandler(
