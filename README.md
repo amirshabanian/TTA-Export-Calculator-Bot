@@ -1,48 +1,64 @@
-# T.T.A Export Cost Calculator Bot
+# T.T.A Export Calculator | محاسبه‌گر صادرات T.T.A
 
-**A bilingual Telegram assistant for export cost estimation and customer-ready quotations.**
+**نسخه جاری / Current version: 6.0.5**  
+**Developed by Amir Shabanian | توسعه‌دهنده: امیر شعبانیان**  
+Shabanian Trading | بازرگانی شعبانیان  
+Tamana Tejarat Armaghan (T.T.A) | تمنا تجارت ارمغان
 
-Developed by **Amir Shabanian**  
-Founder of Shabanian Trading | Business Partner at Tamana Tejarat Armaghan (T.T.A)
+---
 
-## Overview
+## فارسی
 
-T.T.A Export Cost Calculator helps exporters estimate shipment costs and prepare a clean, English-language quotation PDF for customers. It is built with Python, `python-telegram-bot`, SQLite, and ReportLab.
+ربات تلگرام محاسبه قیمت تمام‌شده صادرات، محاسبه قیمت پیشنهادی مشتری و تولید پیش‌فاکتور PDF.
 
-## Core workflow
+### امکانات
+- رابط و راهنمای دوزبانه فارسی و انگلیسی
+- محاسبه هزینه محصول، بسته‌بندی و نیروی کار، سود، حمل داخلی، ترخیص و حمل دریایی
+- انتخاب روش پرداخت حمل دریایی: تهران با مالیات قابل تنظیم یا امارات با نرخ USD/AED
+- هزینه‌های Switch Bill و Cross Stuffing
+- محاسبه قیمت نهایی بر مبنای وزن ناخالص و گرد کردن رو به بالا با گام ۰٫۰۵ دلار به‌ازای هر کیلو
+- پروفایل شرکت و درج اطلاعات شرکت در پیش‌فاکتور مشتری
+- خروجی PDF مشتری بدون نمایش جزئیات محرمانه هزینه‌های داخلی
+- دوره آزمایشی، لایسنس و پنل مدیریت
 
-1. Enter product and packaging details.
-2. Enter package count, gross/net weight, and product cost.
-3. Add packing/labor, inland transport, customs, and sea freight.
-4. Select freight payment method and enter applicable exchange rates.
-5. Calculate landed cost and a customer quote rounded upward to the next USD 0.05.
-6. Generate a customer-facing PDF that excludes internal cost breakdowns.
+### نصب و استقرار در Railway
+1. فایل `bot.py` و `requirements.txt` را در مخزن قرار دهید.
+2. متغیر محیطی `TELEGRAM_BOT_TOKEN` را در Railway تنظیم کنید؛ توکن را در GitHub قرار ندهید.
+3. شناسه مدیر را در `TTA_ADMIN_IDS` تنظیم کنید.
+4. برای حفظ پروفایل‌ها و لایسنس‌ها، یک Railway Volume به مسیر `/data` متصل و متغیر `TTA_DB_PATH=/data/tta_bot.db` را تنظیم کنید. پیش از تغییر مسیر دیتابیس، از فایل دیتابیس فعلی نسخه پشتیبان بگیرید و در صورت وجود داده‌های قبلی، آن‌ها را منتقل کنید.
+5. فقط **یک نمونه فعال** از ربات را با همین توکن اجرا کنید؛ اجرای هم‌زمان چند نمونه می‌تواند خطای `Conflict: terminated by other getUpdates request` ایجاد کند.
+6. پس از Deploy، یک محاسبه کامل را تا دریافت PDF آزمایش کنید.
 
-## Features
+### نکته پایداری
+اطلاعات پروفایل در SQLite ذخیره می‌شود. اگر فایل دیتابیس روی فضای موقت سرویس باشد، ممکن است پس از استقرار مجدد از دسترس خارج شود. برای جلوگیری از این مشکل، Volume پایدار را تنظیم کنید و در لاگ شروع برنامه مسیر دیتابیس را بررسی کنید.
 
-- Persian and English prompts
-- Shipment cost calculations
-- Tehran freight payment with configurable tax
-- UAE freight payment in AED with configurable USD/AED rate
-- Optional switch-bill and cross-stuffing charges
-- Customer quotation PDF
-- SQLite-backed user/license data
-- Admin tools and trial/license workflow (depending on deployed bot version)
+---
 
-## Deployment notes
+## English
 
-- Store the Telegram bot token only in hosting environment variables. Never commit it to GitHub.
-- Run only **one polling instance** for a bot token. Multiple instances can trigger `Conflict: terminated by other getUpdates request`.
-- Configure a persistent Railway Volume for SQLite; temporary container storage may be lost during redeployment.
-- Verify admin configuration and test a full calculation and PDF after deployment.
+A bilingual Telegram bot for export landed-cost calculation and customer-ready PDF quotations.
 
-## Contact the developer
+### Features
+- Persian and English prompts and menus
+- Product, packaging/labor, profit, inland transport, customs clearance, and sea freight calculations
+- Tehran freight payment with configurable tax, or UAE payment using a USD/AED rate
+- Switch Bill and Cross Stuffing charges
+- Customer price calculated per gross kilogram and rounded upward to the next USD 0.05
+- Company profile stored in SQLite and used in customer quotations
+- Customer-facing PDF excludes internal cost breakdowns
+- Trial, license, and administrator workflows
 
-**Amir Shabanian**  
-Founder of Shabanian Trading | Business Partner at Tamana Tejarat Armaghan (T.T.A)
+### Railway deployment
+1. Commit `bot.py` and `requirements.txt` to the repository.
+2. Set `TELEGRAM_BOT_TOKEN` in Railway Variables. Never commit the token to GitHub.
+3. Set `TTA_ADMIN_IDS` to the authorized Telegram user ID(s).
+4. Attach a persistent Railway Volume at `/data` and set `TTA_DB_PATH=/data/tta_bot.db` to retain profiles and license data. Back up and migrate any existing database before changing its path.
+5. Run exactly **one active polling instance** per bot token to avoid Telegram polling conflicts.
+6. After deployment, test the complete calculation flow and PDF generation.
 
-- WhatsApp: [Contact on WhatsApp](https://wa.me/qr/DDNAEFASNGBAP1)
+### Support / ارتباط
+- **Amir Shabanian**
+- **Shabanian Trading | بازرگانی شعبانیان**
+- **Tamana Tejarat Armaghan (T.T.A) | تمنا تجارت ارمغان**
 - Telegram: [@tamana_tejarat](https://t.me/tamana_tejarat)
-- TON wallet (optional project support): `UQDRwAh-L8KRqTIxoDBTmBs-oc0qwF3fTIqVN0oqJpSLjdCZ`
-
-Thank you for using and supporting this project.
+- WhatsApp: [Contact](https://wa.me/qr/DDNAEFASNGBAP1)
