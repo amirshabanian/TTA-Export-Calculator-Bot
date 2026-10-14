@@ -1,0 +1,26 @@
+[Unit]
+Description=T.T.A Export Calculator Telegram Bot
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=tta-bot
+Group=tta-bot
+WorkingDirectory=/opt/tta-bot
+EnvironmentFile=/opt/tta-bot/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/tta-bot/.venv/bin/python /opt/tta-bot/bot.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGINT
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/tta-bot /tmp
+
+[Install]
+WantedBy=multi-user.target

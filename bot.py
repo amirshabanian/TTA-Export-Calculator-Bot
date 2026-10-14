@@ -1,4 +1,4 @@
-# T.T.A EXPORT CALCULATOR v6.1.0 STABLE
+# T.T.A EXPORT CALCULATOR v6.2.0 ORACLE STABLE
 # Professional bilingual Telegram export-cost calculator
 # 7-day trial + per-user licenses + admin panel + bilingual calculation flow
 
@@ -23,7 +23,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, filters
 )
 
-VERSION = "6.1.0"
+VERSION = "6.2.0-ORACLE"
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DB_PATH = os.getenv("TTA_DB_PATH", "tta_bot.db")
 TRIAL_DAYS = int(os.getenv("TTA_TRIAL_DAYS", "7"))
@@ -1195,7 +1195,7 @@ def main():
 
     profile_conv = ConversationHandler(
         entry_points=[
-            CommandHandler("profile", cancel),
+            CommandHandler("profile", profile_start),
             CallbackQueryHandler(profile_start, pattern=r"^profile$"),
         ],
         states={
@@ -1211,7 +1211,7 @@ def main():
         fallbacks=[
             CommandHandler("cancel", cancel),
             CommandHandler("start", start),
-            CommandHandler("profile", cancel),
+            CommandHandler("profile", profile_start),
             CallbackQueryHandler(menu_interrupt, pattern=r"^(home|profile|license|help|contact|admin)$"),
         ],
         allow_reentry=True,
@@ -1247,7 +1247,7 @@ def main():
             CommandHandler("cancel", cancel),
             CommandHandler("start", start),
             CommandHandler("new", begin),
-            CommandHandler("profile", cancel),
+            CommandHandler("profile", profile_start),
             CallbackQueryHandler(menu_interrupt, pattern=r"^(home|profile|license|help|contact|admin)$"),
         ],
         allow_reentry=True,
